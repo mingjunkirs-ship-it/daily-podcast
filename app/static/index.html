@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Podcast Builder</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card: #111827;
+        --line: #334155;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --primary: #3b82f6;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: linear-gradient(180deg, #020617, #0f172a);
+        color: var(--text);
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      h1, h2 { margin: 0 0 12px; }
+      .hint { color: var(--muted); margin-top: 8px; font-size: 13px; }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .card {
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .card.full { grid-column: 1 / -1; }
+      .row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+      .col { flex: 1; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid #374151;
+        background: #0b1220;
+        color: var(--text);
+        padding: 10px;
+        border-radius: 8px;
+      }
+      textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      button {
+        border: 0;
+        background: #1f2937;
+        color: var(--text);
+        padding: 10px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button.primary { background: var(--primary); }
+      button.warn { background: #b91c1c; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+      .list { display: flex; flex-direction: column; gap: 10px; }
+      .item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        background: #0b1220;
+      }
+      .small { font-size: 12px; color: var(--muted); }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid #475569;
+        color: #cbd5e1;
+      }
+      .ok { color: #86efac; border-color: #166534; }
+      .fail { color: #fca5a5; border-color: #991b1b; }
+      .progress-track {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: #1e293b;
+        overflow: hidden;
+        border: 1px solid #334155;
+        margin: 6px 0 8px;
+      }
+      .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #2563eb, #22c55e);
+        transition: width 0.25s ease;
+      }
+      .secret-inline {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .secret-inline input { flex: 1; }
+      .secret-inline button { white-space: nowrap; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      a { color: #93c5fd; }
+      @media (max-width: 900px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>AI Podcast Builder</h1>
+      <p class="hint">
+        配置来源（RSS / arXiv / NewsAPI）→ 自动转换 RSS → LLM 总结 → TTS 生成播客 → Telegram 推送。
+      </p>
+
+      <div class="actions">
+        <span class="small" id="currentUser"></span>
+        <button class="primary" id="runNowBtn">立即执行一次</button>
+        <button id="rebuildFeedsBtn">重建来源 RSS</button>
+        <button id="refreshBtn">刷新面板</button>
+        <button id="logoutBtn">退出登录</button>
+      </div>
+
+      <div class="grid">
+        <section class="card">
+          <h2>全局设置</h2>
+          <div class="row"><div class="col"><label>语言</label><input id="language" /></div><div class="col"><label>时区</label><input id="timezone" /></div></div>
+          <div class="row"><div class="col"><label>定时 Cron（默认每天8点: 0 8 * * *）</label><input id="schedule_cron" /></div></div>
+          <div class="row"><div class="col"><label>关键词（逗号分隔）</label><input id="topic_keywords" /></div></div>
+          <div class="row"><div class="col"><label>每源最大条目</label><input id="max_items_per_source" type="number" /></div><div class="col"><label>总条目上限</label><input id="max_total_items" type="number" /></div></div>
+          <div class="row"><div class="col"><label>播客名称</label><input id="podcast_name" /></div><div class="col"><label>主播风格</label><input id="podcast_host_style" /></div></div>
+          <button class="primary" id="saveGeneralBtn">保存全局设置</button>
+          <div style="height:1px;background:#334155;margin:14px 0;"></div>
+          <h3 style="margin:0 0 8px;font-size:16px;">账号安全</h3>
+          <div class="row"><div class="col"><label>当前密码</label><input id="current_password" type="password" autocomplete="current-password" /></div></div>
+          <div class="row"><div class="col"><label>新密码（至少8位）</label><input id="new_password" type="password" autocomplete="new-password" /></div></div>
+          <button id="changePasswordBtn">修改密码</button>
+        </section>
+
+        <section class="card">
+          <h2>LLM / TTS / Telegram</h2>
+          <div class="row"><div class="col"><label>LLM Base URL</label><input id="llm_api_base" /></div><div class="col"><label>LLM Model</label><input id="llm_model" /></div></div>
+          <div class="row"><div class="col"><label>LLM API Key</label><div class="secret-inline"><input id="llm_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="llm_api_key">显示</button></div></div><div class="col"><label>LLM Temperature</label><input id="llm_temperature" type="number" step="0.1" /></div></div>
+          <div class="row"><div class="col"><label>摘要 System Prompt</label><textarea id="llm_summary_system_prompt"></textarea></div></div>
+          <div class="row"><div class="col"><label>摘要 Prompt（支持变量 {language} {index} {total} {source} {title}）</label><textarea id="llm_summary_prompt_template"></textarea></div></div>
+          <div class="row"><div class="col"><label>播客脚本 System Prompt</label><textarea id="llm_episode_system_prompt"></textarea></div></div>
+          <div class="row"><div class="col"><label>播客脚本 Prompt（支持变量 {language} {host_style} {podcast_name} {count}）</label><textarea id="llm_episode_prompt_template"></textarea></div></div>
+          <div class="row"><div class="col"><label>提示词版本名称</label><input id="promptVersionName" placeholder="例如：严谨学术版 / 轻松播报版" /></div></div>
+          <div class="row">
+            <button id="savePromptVersionBtn">保存当前提示词版本</button>
+            <select id="promptVersionSelect" style="max-width:420px;"></select>
+            <button id="applyPromptVersionBtn">加载版本</button>
+            <button id="deletePromptVersionBtn" class="warn">删除版本</button>
+          </div>
+          <div class="small" id="promptVersionStatus" style="min-height:18px;"></div>
+
+          <div class="row"><div class="col"><label>TTS 开启</label><select id="tts_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>TTS Provider</label><select id="tts_provider"><option value="edge_tts">edge_tts（默认免费）</option><option value="custom_api">custom_api（自定义接口）</option></select></div></div>
+          <input id="tts_voice" type="hidden" />
+          <div class="row"><div class="col"><label>TTS Format</label><input id="tts_format" /></div></div>
+          <div class="row tts-custom-only"><div class="col"><label>TTS Base URL</label><input id="tts_api_base" /></div><div class="col"><label>TTS Model</label><input id="tts_model" /></div></div>
+          <div class="row tts-custom-only"><div class="col"><label>TTS Voice（custom_api）</label><input id="tts_custom_voice" placeholder="例如 default_zh" /></div><div class="col"><label>TTS Speed</label><input id="tts_audio_speed" type="number" step="0.1" /></div></div>
+          <div class="row tts-edge-only"><div class="col"><label>Edge 语言</label><select id="edge_voice_language"></select></div><div class="col"><label>Edge Voice</label><select id="edge_voice_select"></select></div><div class="col" style="max-width:180px;"><label>&nbsp;</label><button type="button" id="refreshEdgeVoicesBtn">刷新 Edge 音色</button></div></div>
+          <div class="row tts-edge-only"><div class="col"><label>TTS Speed</label><input id="tts_audio_speed_edge" type="number" step="0.1" /></div></div>
+          <div class="row tts-edge-only"><div class="col"><label>Edge Proxy（可选）</label><input id="tts_edge_proxy" placeholder="例如：http://127.0.0.1:7890" /></div><div class="col"><label>Edge 超时（连接/接收 秒）</label><div class="row" style="margin-bottom:0;"><input id="tts_edge_connect_timeout" type="number" /><input id="tts_edge_receive_timeout" type="number" /></div></div></div>
+          <div class="row tts-custom-only"><div class="col"><label>TTS API Key</label><div class="secret-inline"><input id="tts_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="tts_api_key">显示</button></div></div></div>
+
+          <div class="row"><div class="col"><label>Telegram 开启</label><select id="telegram_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>发送音频</label><select id="telegram_send_audio"><option value="true">true</option><option value="false">false</option></select></div></div>
+          <div class="row"><div class="col"><label>Bot Token</label><div class="secret-inline"><input id="telegram_bot_token" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="telegram_bot_token">显示</button></div></div><div class="col"><label>Chat ID</label><input id="telegram_chat_id" /></div></div>
+
+          <div class="row"><div class="col"><label>NewsAPI 全局 Key（可选）</label><div class="secret-inline"><input id="newsapi_global_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="newsapi_global_key">显示</button></div></div></div>
+          <div class="row"><div class="col"><label>RSSHub Base URL（容器内默认 http://rsshub:1200）</label><input id="rsshub_base_url" /></div></div>
+
+          <div class="row">
+            <button class="primary" id="saveApiBtn">保存 API 设置</button>
+            <button id="testLlmBtn">测试 LLM</button>
+            <span class="small" id="llmTestStatus"></span>
+          </div>
+          <div class="row">
+            <button id="testTtsBtn">测试 TTS</button>
+            <span class="small" id="ttsTestStatus"></span>
+          </div>
+          <p class="hint">默认建议使用 <code>edge_tts</code>（无需 API Key）；如需第三方 TTS 接口，切换为 <code>custom_api</code>，系统会在后端自动选择兼容调用方式。若 edge-tts 报 403，可配置 Edge Proxy 再测试。</p>
+        </section>
+
+        <section class="card full">
+          <h2>来源管理</h2>
+          <div class="row">
+            <button id="importPresetsBtn">导入推荐来源</button>
+            <label class="small" style="display:flex;align-items:center;gap:6px;">
+              <input id="overwritePresets" type="checkbox" style="width:auto;" /> 覆盖同名同类型配置
+            </label>
+            <a target="_blank" href="/rss/aggregated.xml">查看聚合 RSS</a>
+          </div>
+          <div id="presetsList" class="small" style="margin-bottom:10px;"></div>
+
+          <div class="row">
+            <div class="col"><label>RSS 名称（可选）</label><input id="new_rss_name" placeholder="例如 Hacker News" /></div>
+            <div class="col"><label>RSS URL</label><input id="new_rss_url" placeholder="https://example.com/rss.xml" /></div>
+            <div class="col"><label>启用</label><select id="new_rss_enabled"><option value="true">true</option><option value="false">false</option></select></div>
+          </div>
+          <div class="row"><button class="primary" id="addRssBtn">添加 RSS 来源</button></div>
+
+          <div style="height:1px;background:#334155;margin:12px 0;"></div>
+          <div class="row">
+            <div class="col"><label>RSSHub 模板</label><select id="rsshubTemplateSelect"></select></div>
+            <div class="col" style="align-self:flex-end;"><button id="applyRssHubTemplateBtn">套用模板</button></div>
+          </div>
+          <div class="row">
+            <div class="col"><label>RSSHub 名称（可选）</label><input id="new_rsshub_name" placeholder="例如 GitHub Releases" /></div>
+            <div class="col"><label>RSSHub 路由</label><input id="new_rsshub_route" placeholder="/github/repo/DIYgod/RSSHub/releases" /></div>
+            <div class="col"><label>启用</label><select id="new_rsshub_enabled"><option value="true">true</option><option value="false">false</option></select></div>
+          </div>
+          <div class="row">
+            <button id="addRssHubBtn">通过 RSSHub 添加</button>
+            <a target="_blank" href="https://docs.rsshub.app/">RSSHub 路由文档</a>
+          </div>
+          <p class="hint">
+            现在支持直接输入 RSS URL 添加来源；没有 RSS 的网站可通过 RSSHub 路由生成 RSS 后一键接入。
+          </p>
+          <div id="sourcesList" class="list"></div>
+        </section>
+
+        <section class="card full">
+          <h2>Episodes</h2>
+          <div id="episodesList" class="list"></div>
+        </section>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
