@@ -5,11 +5,12 @@
 - 可在 Web 控制台配置信息源（`rss` / `arxiv` / `newsapi`）
 - 内置推荐来源模板，一键导入（arXiv LLM、Agent、NewsAPI 等）
 - 支持直接添加 RSS URL；也可通过 RSSHub 路由生成 RSS 后一键接入
+- 内置 RSSHub（DIYgod/RSSHub）服务，便于将无 RSS 的页面转换为可订阅源
 - 提供 RSSHub 路由模板，可一键套用常见站点路由
 - 将来源统一转换为 RSS（每个来源一个 feed + 聚合 feed）
 - 定时抓取并筛选 AI 相关内容
 - 通过 LLM 进行摘要与播客脚本生成（Prompt 可在页面编辑）
-- 通过 TTS 生成播客音频
+- 通过 TTS 生成播客音频（默认使用 edge-tts，支持切换 custom_api）
 - 通过 Telegram 富文本推送音频与参考材料
 - 执行任务时显示阶段进度（抓取/过滤/总结/脚本/TTS/推送）与失败明细
 
@@ -129,9 +130,17 @@ RSS 访问：
 - 后端：FastAPI + SQLAlchemy + APScheduler
 - 抓取适配：RSS / arXiv API / NewsAPI
 - 内容加工：LLM 摘要 + 播客脚本生成
-- 音频：TTS API（OpenAI 兼容）
+- RSS 聚合：RSS / arXiv / NewsAPI + 内置 RSSHub（DIYgod/RSSHub）
+- 音频：默认 edge-tts（微软语音），可切换 custom_api（OpenAI 兼容）
 - 分发：Telegram Bot API
 - 部署：Docker / Docker Compose
+
+---
+
+## 6.1 核心组件说明
+
+- `RSSHub`：用于把没有原生 RSS 的网站转换成 RSS 链接，项目内已通过 Docker Compose 集成，可在 `http://localhost:26553` 访问。
+- `edge-tts`：默认 TTS 引擎，无需单独 API Key；支持语言与音色选择。遇到网络限制（如 403）时，可在面板配置代理，或切换到 `custom_api`。
 
 ---
 
