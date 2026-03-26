@@ -577,6 +577,19 @@ async function request(url, opts = {}) {
   return response.text();
 }
 
+async function requestWithTimeout(url, opts = {}, timeoutMs = 20000) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`请求超时（>${Math.floor(timeoutMs / 1000)}s）`)), timeoutMs);
+  });
+  try {
+    const res = await Promise.race([request(url, opts), timeoutPromise]);
+    return res;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function fillSettings(values) {
   [...fieldsGeneral, ...fieldsAPI].forEach((field) => {
     const el = qs(field);
@@ -1176,13 +1189,27 @@ async function testTts() {
 
 async function testTelegram() {
   setTestStatus("telegramTestStatus", true, "测试中...");
+  showToast("info", "正在测试 Telegram 连接...");
   await saveSettings(fieldsAPI);
-  const res = await request("/api/test/telegram", { method: "POST" });
+  const res = await requestWithTimeout("/api/test/telegram", { method: "POST" }, 20000);
   const ok = Boolean(res.ok);
   const message = res.message || "无返回";
-  setTestStatus("telegramTestStatus", ok, message);
-  showToast(ok ? "success" : "error", `Telegram 测试${ok ? "成功" : "失败"}：${message}`);
+  setTestStatus("telegramTestStatus", ok, ok ? "已发送" : message);
+  showToast(ok ? "success" : "error", ok ? "Telegram 测试消息已发送" : `Telegram 测试失败：${message}`);
 }
+
+window.triggerTelegramTest = async function triggerTelegramTest() {
+  const tgBtn = qs("testTelegramBtn");
+  if (tgBtn) setButtonLoading(tgBtn, true);
+  try {
+    await testTelegram();
+  } catch (e) {
+    setTestStatus("telegramTestStatus", false, e.message);
+    showToast("error", `Telegram 测试失败：${e.message}`);
+  } finally {
+    if (tgBtn) setButtonLoading(tgBtn, false);
+  }
+};
 
 async function testCron() {
   const scheduleCron = (qs("schedule_cron")?.value || "").trim();
@@ -1433,18 +1460,10 @@ async function init() {
     }
   };
 
-  qs("testTelegramBtn").onclick = async () => {
-    const btn = qs("testTelegramBtn");
-    setButtonLoading(btn, true);
-    try {
-      await testTelegram();
-    } catch (e) {
-      setTestStatus("telegramTestStatus", false, e.message);
-      showToast("error", `Telegram 测试失败：${e.message}`);
-    } finally {
-      setButtonLoading(btn, false);
-    }
-  };
+  const tgBtn = qs("testTelegramBtn");
+  if (tgBtn) {
+    tgBtn.onclick = () => window.triggerTelegramTest();
+  }
 
   initSecretToggles();
 

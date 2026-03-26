@@ -51,6 +51,36 @@ class TelegramClient:
         except Exception as exc:
             return False, f"Telegram 测试失败：{exc}"
 
+    async def send_test_message(self, text: str) -> tuple[bool, str]:
+        if not self.enabled:
+            return False, "Telegram 未启用"
+        if not self.token:
+            return False, "Telegram Bot Token 未配置"
+        if not self.chat_id:
+            return False, "Telegram Chat ID 未配置"
+
+        endpoint = f"{self.base_url}/sendMessage"
+        payload: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "text": str(text or "")[:4000],
+            "disable_web_page_preview": True,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(endpoint, json=payload)
+                if resp.status_code >= 300:
+                    return False, f"发送失败：HTTP {resp.status_code}"
+
+                data = resp.json()
+                if not data.get("ok"):
+                    desc = str(data.get("description") or "unknown error")
+                    return False, f"发送失败：{desc}"
+
+                return True, "测试消息已发送"
+        except Exception as exc:
+            return False, f"发送失败：{exc}"
+
     @property
     def base_url(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"

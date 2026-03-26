@@ -670,7 +670,7 @@
             <div class="row"><div class="col"><label>Telegram 开启</label><select id="telegram_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>发送音频</label><select id="telegram_send_audio"><option value="true">true</option><option value="false">false</option></select></div></div>
             <div class="row"><div class="col"><label>Bot Token</label><div class="secret-inline"><input id="telegram_bot_token" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="telegram_bot_token">显示</button></div></div><div class="col"><label>Chat ID</label><input id="telegram_chat_id" /></div></div>
             <div class="actions">
-              <button id="testTelegramBtn">&#x1F9EA; 测试 Telegram</button>
+              <button id="testTelegramBtn" type="button" onclick="window.triggerTelegramTest && window.triggerTelegramTest()">&#x1F9EA; 测试 Telegram</button>
               <span class="small" id="telegramTestStatus"></span>
             </div>
           </div>
@@ -743,6 +743,58 @@
 
     </div>
 
-    <script src="/static/app.js"></script>
+    <script>
+      // Fallback: even if app.js init fails, Telegram test button still works.
+      window.triggerTelegramTest = window.triggerTelegramTest || async function () {
+        const btn = document.getElementById("testTelegramBtn");
+        const status = document.getElementById("telegramTestStatus");
+        if (btn) btn.disabled = true;
+        if (status) {
+          status.className = "small";
+          status.textContent = "测试中...";
+        }
+        try {
+          const resp = await fetch("/api/test/telegram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          let data = null;
+          try {
+            data = await resp.json();
+          } catch {
+            data = null;
+          }
+          if (!resp.ok) {
+            const detail = data && (data.detail || data.message)
+              ? (data.detail || data.message)
+              : `HTTP ${resp.status}`;
+            if (status) {
+              status.className = "small fail";
+              status.textContent = String(detail);
+            }
+            return;
+          }
+
+          const ok = Boolean(data && data.ok);
+          const msg = (data && data.message) ? String(data.message) : "无返回";
+          if (status) {
+            status.className = ok ? "small ok" : "small fail";
+            status.textContent = ok ? "已发送" : msg;
+          }
+          if (ok) {
+            // Keep this explicit for visibility when toast system is unavailable.
+            alert("Telegram 测试消息已发送，请到 Telegram 查收");
+          }
+        } catch (e) {
+          if (status) {
+            status.className = "small fail";
+            status.textContent = `请求失败：${e.message || e}`;
+          }
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      };
+    </script>
+    <script src="/static/app.js?v=20260327-telegram-fix2"></script>
   </body>
 </html>

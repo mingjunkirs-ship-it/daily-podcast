@@ -890,7 +890,21 @@ async def api_test_telegram_connection(request: Request, db: Session = Depends(g
     settings = get_settings(db, username=username)
     client = TelegramClient(settings)
     ok, message = await client.test_connection()
-    return ConnectionTestResponse(ok=ok, message=message)
+    if not ok:
+        return ConnectionTestResponse(ok=False, message=message)
+
+    now_text = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    test_text = (
+        "✅ Daily Podcast Telegram 测试消息\n"
+        f"用户：{username}\n"
+        f"时间：{now_text}\n"
+        "如果你收到这条消息，说明推送配置可用。"
+    )
+    sent, send_message = await client.send_test_message(test_text)
+    if not sent:
+        return ConnectionTestResponse(ok=False, message=send_message)
+
+    return ConnectionTestResponse(ok=True, message="测试消息已发送，请到 Telegram 查收")
 
 
 @app.post("/api/test/edge-voice")
