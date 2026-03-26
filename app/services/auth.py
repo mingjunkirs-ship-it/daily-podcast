@@ -16,6 +16,27 @@ from app.models import AdminUser
 SESSION_COOKIE_NAME = "podcast_session"
 
 
+def _truthy_env(name: str, default: str) -> bool:
+    raw = os.getenv(name, default).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def admin_username() -> str:
+    return os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+
+
+def is_admin_username(username: str) -> bool:
+    return username.strip() == admin_username()
+
+
+def auth_allow_register() -> bool:
+    return _truthy_env("AUTH_ALLOW_REGISTER", "true")
+
+
+def auth_register_require_admin_approval() -> bool:
+    return _truthy_env("AUTH_REGISTER_REQUIRE_ADMIN_APPROVAL", "false")
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -68,8 +89,7 @@ def session_ttl_seconds() -> int:
 
 
 def auth_cookie_secure() -> bool:
-    raw = os.getenv("AUTH_COOKIE_SECURE", "false").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return _truthy_env("AUTH_COOKIE_SECURE", "false")
 
 
 def create_session_token(username: str) -> str:
@@ -109,19 +129,19 @@ def parse_session_token(token: str | None) -> dict | None:
 
 
 def ensure_default_admin(db: Session) -> None:
-    admin_username = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+    default_admin_username = admin_username()
     admin_password = os.getenv("ADMIN_PASSWORD", "adminadmin")
 
-    existing = db.scalar(select(AdminUser).where(AdminUser.username == admin_username))
+    existing = db.scalar(select(AdminUser).where(AdminUser.username == default_admin_username))
     if existing:
         return
 
-    row = AdminUser(username=admin_username, password_hash=hash_password(admin_password))
+    row = AdminUser(username=default_admin_username, password_hash=hash_password(admin_password))
     db.add(row)
     db.commit()
 
 
-def authenticate_admin(db: Session, username: str, password: str) -> AdminUser | None:
+def authenticate_user(db: Session, username: str, password: str) -> AdminUser | None:
     row = db.scalar(select(AdminUser).where(AdminUser.username == username.strip()))
     if not row:
         return None
@@ -130,14 +150,26 @@ def authenticate_admin(db: Session, username: str, password: str) -> AdminUser |
     return row
 
 
-def get_admin_by_username(db: Session, username: str) -> AdminUser | None:
+def authenticate_admin(db: Session, username: str, password: str) -> AdminUser | None:
+    return authenticate_user(db, username, password)
+
+
+def get_user_by_username(db: Session, username: str) -> AdminUser | None:
     return db.scalar(select(AdminUser).where(AdminUser.username == username.strip()))
 
 
-def update_admin_password(db: Session, username: str, new_password: str) -> bool:
-    row = get_admin_by_username(db, username)
+def get_admin_by_username(db: Session, username: str) -> AdminUser | None:
+    return get_user_by_username(db, username)
+
+
+def update_user_password(db: Session, username: str, new_password: str) -> bool:
+    row = get_user_by_username(db, username)
     if not row:
         return False
     row.password_hash = hash_password(new_password)
     db.commit()
     return True
+
+
+def update_admin_password(db: Session, username: str, new_password: str) -> bool:
+    return update_user_password(db, username, new_password)

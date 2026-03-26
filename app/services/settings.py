@@ -13,6 +13,7 @@ from app.models import AppSetting
 DEFAULT_SETTINGS: dict[str, Any] = {
     "language": "zh-CN",
     "timezone": "Asia/Shanghai",
+    "schedule_enabled": True,
     "schedule_cron": "0 8 * * *",
     "max_items_per_source": 20,
     "max_total_items": 40,
@@ -76,6 +77,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "telegram_send_audio": True,
     "newsapi_global_key": "",
     "rsshub_base_url": os.getenv("RSSHUB_BASE_URL", "http://rsshub:1200"),
+    "auth_blocked_usernames": [],
 }
 
 

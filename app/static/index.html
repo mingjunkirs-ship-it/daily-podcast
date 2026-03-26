@@ -539,7 +539,13 @@
                 <div class="col"><label>语言</label><select id="language"><option value="zh-CN">中文（简体）</option><option value="en-US">English (US)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="es-ES">Español</option><option value="pt-BR">Português (Brasil)</option><option value="ru-RU">Русский</option></select></div>
                 <div class="col"><label>时区</label><input id="timezone" placeholder="Asia/Shanghai" /></div>
               </div>
+              <div class="row"><div class="col"><label>定时任务开关</label><select id="schedule_enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
               <div class="row"><div class="col"><label>定时 Cron（默认每天8点: 0 8 * * *）</label><input id="schedule_cron" placeholder="0 8 * * *" /></div></div>
+              <div class="row"><div class="col"><label>自然语言转 Cron</label><input id="cron_natural_text" placeholder="例如：每天早上8点 / 每周一9:30 / 每月1号8点" /></div></div>
+              <div class="actions" style="margin-top:4px;">
+                <button id="convertCronBtn">&#x1F9E0; 转换为 Cron</button>
+                <span class="small" id="cronConvertStatus"></span>
+              </div>
             </div>
             <div class="field-group">
               <div class="field-group-title">播客风格</div>
@@ -562,6 +568,35 @@
               <div class="row"><div class="col"><label>新密码（至少8位）</label><input id="new_password" type="password" autocomplete="new-password" /></div></div>
             </div>
             <button id="changePasswordBtn">&#x1F511; 修改密码</button>
+
+            <div id="adminUserSection" style="display:none; margin-top:14px;">
+              <div class="field-group">
+                <div class="field-group-title">管理员：重置用户密码</div>
+                <div class="row"><div class="col"><label>目标用户名</label><input id="admin_reset_username" placeholder="需要重置密码的用户名" /></div></div>
+                <div class="row"><div class="col"><label>新密码（至少8位）</label><input id="admin_reset_password" type="password" autocomplete="new-password" /></div></div>
+                <div class="actions">
+                  <button id="adminResetPasswordBtn">&#x1F527; 管理员重置密码</button>
+                  <span class="small" id="adminUserStatus"></span>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">管理员：用户列表（禁用/删除）</div>
+                <div class="actions">
+                  <button id="refreshUsersBtn">&#x1F465; 刷新用户列表</button>
+                </div>
+                <div id="adminUsersList" class="list"></div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">管理员：注册审核</div>
+                <div class="actions">
+                  <button id="refreshPendingRegistrationsBtn">&#x1F504; 刷新待审核</button>
+                  <span class="small" id="pendingRegistrationStatus"></span>
+                </div>
+                <div id="pendingRegistrationsList" class="list"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -661,6 +696,30 @@
           <div class="row" style="margin-top:8px;">
             <button class="primary" id="addSourceBtn">&#x2795; 添加来源</button>
             <a target="_blank" href="/rss/aggregated.xml">&#x1F4CB; 查看聚合 RSS</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x1F4E6;</span> 批量导入 RSS 配置</div>
+          <div class="row"><div class="col"><label>JSON 配置（支持数组 / {"items": [...]} / {"sources": [...]}）</label><textarea id="rss_batch_import_text" placeholder='{
+  "items": [
+    {
+      "name": "Hacker News",
+      "url": "https://hnrss.org/frontpage",
+      "enabled": true,
+      "keywords": ["LLM", "AI", "agent"],
+      "max_items": 20
+    }
+  ]
+}'></textarea></div></div>
+          <div class="row">
+            <div class="col" style="max-width:220px;"><label>重复 URL 处理</label><select id="rss_import_overwrite"><option value="false">跳过已存在</option><option value="true">覆盖已存在</option></select></div>
+          </div>
+          <p class="hint">单项字段：<code>url</code>（必填）、<code>name</code>（可选）、<code>enabled</code>（默认 true）、<code>keywords</code>（字符串或数组）、<code>max_items</code>（1-200）。可让 AI 按该格式生成后直接粘贴导入。</p>
+          <div class="row" style="margin-top:8px;">
+            <button class="primary" id="importRssBatchBtn">&#x2B07;&#xFE0F; 批量导入</button>
+            <button id="fillRssImportExampleBtn">&#x1F4DD; 填充示例</button>
+            <span class="small" id="rssBatchImportStatus"></span>
           </div>
         </div>
 

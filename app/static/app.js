@@ -4,10 +4,12 @@ let cachedPromptVersions = [];
 let cachedEdgeVoiceLanguages = [];
 let episodesPollTimer = null;
 let edgePreviewObjectUrl = null;
+let currentAuthUser = null;
 
 const fieldsGeneral = [
   "language",
   "timezone",
+  "schedule_enabled",
   "schedule_cron",
   "podcast_name",
 ];
@@ -74,6 +76,25 @@ const EDGE_VOICE_FALLBACK_LANGUAGES = [
     ],
   },
 ];
+
+const RSS_BATCH_IMPORT_EXAMPLE = `{
+  "items": [
+    {
+      "name": "Hacker News",
+      "url": "https://hnrss.org/frontpage",
+      "enabled": true,
+      "keywords": ["LLM", "AI", "agent"],
+      "max_items": 20
+    },
+    {
+      "name": "arXiv cs.CL",
+      "url": "https://rsshub.app/arxiv/cs.CL",
+      "enabled": true,
+      "keywords": "large language model, benchmark",
+      "max_items": 15
+    }
+  ]
+}`;
 
 // ==================== Toast System ====================
 
@@ -178,7 +199,7 @@ function parseValueByField(field, raw) {
   if (["llm_api_base", "tts_api_base"].includes(field)) return normalizeBaseUrl(raw);
   if (["max_items_per_source", "max_total_items", "tts_audio_speed", "tts_edge_connect_timeout", "tts_edge_receive_timeout"].includes(field)) return Number(raw);
   if (["llm_temperature"].includes(field)) return Number(raw);
-  if (["tts_enabled", "telegram_enabled", "telegram_send_audio"].includes(field)) return raw === "true";
+  if (["tts_enabled", "telegram_enabled", "telegram_send_audio", "schedule_enabled"].includes(field)) return raw === "true";
   return raw;
 }
 
@@ -435,6 +456,13 @@ function setCronTestStatus(ok, message) {
   el.textContent = message;
 }
 
+function setCronConvertStatus(ok, message) {
+  const el = qs("cronConvertStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
 function setEdgeTtsUpdateStatus(ok, message) {
   const el = qs("edgeTtsUpdateStatus");
   if (!el) return;
@@ -451,6 +479,27 @@ function setEdgeVoicePreviewStatus(ok, message) {
 
 function setPromptVersionStatus(ok, message) {
   const el = qs("promptVersionStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
+function setAdminUserStatus(ok, message) {
+  const el = qs("adminUserStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
+function setPendingRegistrationStatus(ok, message) {
+  const el = qs("pendingRegistrationStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
+function setRssBatchImportStatus(ok, message) {
+  const el = qs("rssBatchImportStatus");
   if (!el) return;
   el.className = ok ? "small ok" : "small fail";
   el.textContent = message;
@@ -667,6 +716,183 @@ function renderEmptyState(containerId, icon, title, desc) {
   `;
 }
 
+function updateAdminSectionVisibility(isAdmin) {
+  const section = qs("adminUserSection");
+  if (!section) return;
+  section.style.display = isAdmin ? "" : "none";
+}
+
+function pendingRegistrationItemHTML(row) {
+  return `
+    <div class="item" data-registration-id="${row.id}">
+      <div class="row">
+        <div class="col"><strong>${escapeHtml(row.username || "")}</strong></div>
+        <div class="small">#${row.id}</div>
+      </div>
+      <div class="small">created=${escapeHtml(String(row.created_at || "-"))}</div>
+      <div class="row" style="margin-top:8px;">
+        <button class="sm approve-registration">\u2705 通过</button>
+        <button class="warn sm reject-registration">\u274C 拒绝</button>
+      </div>
+    </div>
+  `;
+}
+
+function adminUserItemHTML(row) {
+  const disabled = Boolean(row.disabled);
+  const disabledPill = disabled ? `<span class="pill fail">disabled</span>` : `<span class="pill ok">enabled</span>`;
+  const adminPill = row.is_admin ? `<span class="pill">admin</span>` : "";
+  const disableAction = disabled ? "启用" : "禁用";
+  const disableClass = disabled ? "" : "warn";
+
+  return `
+    <div class="item" data-username="${escapeHtml(row.username || "")}" data-disabled="${disabled ? "1" : "0"}">
+      <div class="row">
+        <div class="col"><strong>${escapeHtml(row.username || "")}</strong></div>
+        <div class="small">#${row.id}</div>
+      </div>
+      <div class="row" style="margin-top:4px;">${adminPill}${disabledPill}</div>
+      <div class="small">created=${escapeHtml(String(row.created_at || "-"))}</div>
+      <div class="row" style="margin-top:8px;">
+        <button class="sm set-reset-target">\u{1F3AF} 设为重置目标</button>
+        ${row.is_admin ? "" : `<button class="sm ${disableClass} toggle-user-disabled">${disableAction}</button>`}
+        ${row.is_admin ? "" : `<button class="warn sm delete-user">\u{1F5D1} 删除</button>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminUsers(rows) {
+  const list = qs("adminUsersList");
+  if (!list) return;
+
+  if (rows.length) {
+    list.innerHTML = rows.map(adminUserItemHTML).join("");
+  } else {
+    renderEmptyState("adminUsersList", "\u{1F465}", "暂无用户", "当前没有可管理用户");
+  }
+}
+
+async function loadAdminUsers() {
+  if (!currentAuthUser?.is_admin) {
+    renderAdminUsers([]);
+    return [];
+  }
+  const rows = await request("/api/auth/users");
+  const users = Array.isArray(rows) ? rows : [];
+  renderAdminUsers(users);
+  setAdminUserStatus(true, `用户总数 ${users.length}`);
+  return users;
+}
+
+function renderPendingRegistrations(rows) {
+  const list = qs("pendingRegistrationsList");
+  if (!list) return;
+
+  if (rows.length) {
+    list.innerHTML = rows.map(pendingRegistrationItemHTML).join("");
+  } else {
+    renderEmptyState("pendingRegistrationsList", "\u2705", "暂无待审核注册", "当前没有待处理的注册申请");
+  }
+}
+
+async function loadPendingRegistrations() {
+  if (!currentAuthUser?.is_admin) {
+    renderPendingRegistrations([]);
+    return [];
+  }
+  const rows = await request("/api/auth/registrations/pending");
+  renderPendingRegistrations(Array.isArray(rows) ? rows : []);
+  setPendingRegistrationStatus(true, `待审核 ${Array.isArray(rows) ? rows.length : 0} 条`);
+  return rows;
+}
+
+async function adminResetUserPassword() {
+  if (!currentAuthUser?.is_admin) {
+    throw new Error("仅管理员可执行该操作");
+  }
+
+  const username = (qs("admin_reset_username")?.value || "").trim();
+  const newPassword = qs("admin_reset_password")?.value || "";
+
+  if (!username || !newPassword) {
+    throw new Error("请填写目标用户名和新密码");
+  }
+
+  await request("/api/auth/users/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ username, new_password: newPassword }),
+  });
+
+  qs("admin_reset_password").value = "";
+  setAdminUserStatus(true, `用户 ${username} 密码已重置`);
+}
+
+async function handleAdminUsersClick(event) {
+  if (!currentAuthUser?.is_admin) return;
+  const item = event.target.closest(".item");
+  if (!item) return;
+
+  const username = (item.dataset.username || "").trim();
+  const disabled = item.dataset.disabled === "1";
+  if (!username) return;
+
+  if (event.target.classList.contains("set-reset-target")) {
+    qs("admin_reset_username").value = username;
+    setAdminUserStatus(true, `已选择用户 ${username}`);
+    return;
+  }
+
+  if (event.target.classList.contains("toggle-user-disabled")) {
+    const targetDisabled = !disabled;
+    const title = targetDisabled ? "禁用用户" : "启用用户";
+    const ok = await showConfirm(title, `确认${title} ${username} ?`);
+    if (!ok) return;
+
+    await request("/api/auth/users/set-disabled", {
+      method: "POST",
+      body: JSON.stringify({ username, disabled: targetDisabled }),
+    });
+    setAdminUserStatus(true, `已${targetDisabled ? "禁用" : "启用"}用户 ${username}`);
+    await loadAdminUsers();
+    return;
+  }
+
+  if (event.target.classList.contains("delete-user")) {
+    const ok = await showConfirm("删除用户", `确认删除用户 ${username} ? 该操作不可撤销。`);
+    if (!ok) return;
+    await request(`/api/auth/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+    setAdminUserStatus(true, `已删除用户 ${username}`);
+    await loadAdminUsers();
+  }
+}
+
+async function handlePendingRegistrationClick(event) {
+  if (!currentAuthUser?.is_admin) return;
+  const item = event.target.closest(".item");
+  if (!item) return;
+
+  const registrationId = Number(item.dataset.registrationId || "0");
+  if (!registrationId) return;
+
+  if (event.target.classList.contains("approve-registration")) {
+    const ok = await showConfirm("通过注册", `确认通过注册申请 #${registrationId} ?`);
+    if (!ok) return;
+    await request(`/api/auth/registrations/${registrationId}/approve`, { method: "POST" });
+    setPendingRegistrationStatus(true, `已通过申请 #${registrationId}`);
+    await loadPendingRegistrations();
+    return;
+  }
+
+  if (event.target.classList.contains("reject-registration")) {
+    const ok = await showConfirm("拒绝注册", `确认拒绝注册申请 #${registrationId} ?`);
+    if (!ok) return;
+    await request(`/api/auth/registrations/${registrationId}/reject`, { method: "POST" });
+    setPendingRegistrationStatus(true, `已拒绝申请 #${registrationId}`);
+    await loadPendingRegistrations();
+  }
+}
+
 // ==================== Partial Data Loading ====================
 
 function renderSources(sources) {
@@ -717,7 +943,10 @@ async function loadAll() {
   ]);
 
   // Phase 2: Apply results (DOM updates are synchronous and fast)
-  qs("currentUser").textContent = `\u{1F464} ${me.username}`;
+  currentAuthUser = me;
+  const adminTag = me.is_admin ? " (admin)" : "";
+  qs("currentUser").textContent = `\u{1F464} ${me.username}${adminTag}`;
+  updateAdminSectionVisibility(Boolean(me.is_admin));
   fillSettings(settingsRes.values || {});
 
   cachedPromptVersions = versions;
@@ -725,6 +954,14 @@ async function loadAll() {
 
   renderSources(sources);
   renderEpisodes(episodes);
+
+  if (me.is_admin) {
+    loadAdminUsers().catch((e) => setAdminUserStatus(false, e.message));
+    loadPendingRegistrations().catch((e) => setPendingRegistrationStatus(false, e.message));
+  } else {
+    renderAdminUsers([]);
+    renderPendingRegistrations([]);
+  }
 
   // Phase 3: Edge voices (depends on settings being filled first, non-blocking)
   loadEdgeVoices().catch(() => {});
@@ -777,6 +1014,67 @@ async function addSource() {
   qs("new_rss_url").value = "";
   qs("new_rss_keywords").value = "";
   qs("new_rss_max_items").value = "20";
+  await loadSources();
+}
+
+function parseRssBatchImportItems(rawText) {
+  const input = String(rawText || "").trim();
+  if (!input) throw new Error("请先粘贴批量导入 JSON");
+
+  let cleaned = input;
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```[a-zA-Z0-9_-]*\s*/, "");
+    cleaned = cleaned.replace(/\s*```$/, "");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`JSON 解析失败：${e.message}`);
+  }
+
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (parsed && typeof parsed === "object") {
+    if (Array.isArray(parsed.items)) return parsed.items;
+    if (Array.isArray(parsed.sources)) return parsed.sources;
+  }
+  throw new Error("格式无效：请使用数组，或对象中的 items/sources 数组");
+}
+
+async function importRssBatch() {
+  const raw = qs("rss_batch_import_text")?.value || "";
+  const items = parseRssBatchImportItems(raw);
+  if (!items.length) {
+    setRssBatchImportStatus(false, "未检测到可导入条目");
+    return;
+  }
+
+  const overwriteExisting = qs("rss_import_overwrite")?.value === "true";
+  setRssBatchImportStatus(true, `导入中... 共 ${items.length} 条`);
+
+  const res = await request("/api/sources/import-rss", {
+    method: "POST",
+    body: JSON.stringify({
+      items,
+      overwrite_existing: overwriteExisting,
+    }),
+  });
+
+  const errorRows = Array.isArray(res.errors) ? res.errors : [];
+  const summary = `导入完成：新增 ${res.created || 0}，更新 ${res.updated || 0}，跳过 ${res.skipped || 0}`;
+
+  if (errorRows.length) {
+    const preview = errorRows.slice(0, 3).join(" | ");
+    setRssBatchImportStatus(false, `${summary}，错误 ${errorRows.length}`);
+    showToast("error", `部分条目导入失败：${preview}`);
+  } else {
+    setRssBatchImportStatus(true, summary);
+    showToast("success", summary);
+  }
+
   await loadSources();
 }
 
@@ -889,6 +1187,30 @@ async function testCron() {
   const nextRuns = Array.isArray(res.next_runs) ? res.next_runs : [];
   const suffix = nextRuns.length ? ` | 下次触发: ${nextRuns[0]}` : "";
   setCronTestStatus(Boolean(res.ok), (res.message || "无返回") + suffix);
+}
+
+async function convertCronNatural() {
+  const text = (qs("cron_natural_text")?.value || "").trim();
+  if (!text) {
+    setCronConvertStatus(false, "请先输入自然语言时间");
+    return;
+  }
+
+  setCronConvertStatus(true, "转换中...");
+  const res = await request("/api/cron/from-natural", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+
+  const cron = String(res.cron || "").trim();
+  if (!cron) {
+    setCronConvertStatus(false, "未返回 Cron 表达式");
+    return;
+  }
+
+  const cronInput = qs("schedule_cron");
+  if (cronInput) cronInput.value = cron;
+  setCronConvertStatus(true, `${res.message || "转换成功"}：${cron}`);
 }
 
 async function checkEdgeTtsUpdate(notifyOnLatest = false) {
@@ -1020,6 +1342,18 @@ async function init() {
       await testCron();
     } catch (e) {
       setCronTestStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("convertCronBtn").onclick = async () => {
+    const btn = qs("convertCronBtn");
+    setButtonLoading(btn, true);
+    try {
+      await convertCronNatural();
+    } catch (e) {
+      setCronConvertStatus(false, e.message);
     } finally {
       setButtonLoading(btn, false);
     }
@@ -1196,6 +1530,66 @@ async function init() {
     }
   };
 
+  qs("adminResetPasswordBtn").onclick = async () => {
+    const btn = qs("adminResetPasswordBtn");
+    setButtonLoading(btn, true);
+    try {
+      await adminResetUserPassword();
+      showToast("success", "用户密码已重置");
+    } catch (e) {
+      setAdminUserStatus(false, e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("refreshUsersBtn").onclick = async () => {
+    const btn = qs("refreshUsersBtn");
+    setButtonLoading(btn, true);
+    try {
+      await loadAdminUsers();
+      showToast("success", "用户列表已刷新");
+    } catch (e) {
+      setAdminUserStatus(false, e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("adminUsersList").addEventListener("click", async (event) => {
+    try {
+      await handleAdminUsersClick(event);
+    } catch (e) {
+      setAdminUserStatus(false, e.message);
+      showToast("error", e.message);
+    }
+  });
+
+  qs("refreshPendingRegistrationsBtn").onclick = async () => {
+    const btn = qs("refreshPendingRegistrationsBtn");
+    setButtonLoading(btn, true);
+    try {
+      await loadPendingRegistrations();
+      showToast("success", "待审核列表已刷新");
+    } catch (e) {
+      setPendingRegistrationStatus(false, e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("pendingRegistrationsList").addEventListener("click", async (event) => {
+    try {
+      await handlePendingRegistrationClick(event);
+    } catch (e) {
+      setPendingRegistrationStatus(false, e.message);
+      showToast("error", e.message);
+    }
+  });
+
   // Unified add source button
   qs("addSourceBtn").onclick = async () => {
     const btn = qs("addSourceBtn");
@@ -1204,6 +1598,26 @@ async function init() {
       await addSource();
       showToast("success", "来源已新增");
     } catch (e) {
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("fillRssImportExampleBtn").onclick = () => {
+    const textarea = qs("rss_batch_import_text");
+    if (!textarea) return;
+    textarea.value = RSS_BATCH_IMPORT_EXAMPLE;
+    setRssBatchImportStatus(true, "已填充示例，可直接修改后导入");
+  };
+
+  qs("importRssBatchBtn").onclick = async () => {
+    const btn = qs("importRssBatchBtn");
+    setButtonLoading(btn, true);
+    try {
+      await importRssBatch();
+    } catch (e) {
+      setRssBatchImportStatus(false, e.message);
       showToast("error", e.message);
     } finally {
       setButtonLoading(btn, false);
@@ -1260,6 +1674,10 @@ async function init() {
     setTestStatus("llmTestStatus", true, "未测试");
     setTestStatus("ttsTestStatus", true, "未测试");
     setEdgeVoicePreviewStatus(true, "可试听当前选择音色");
+    setRssBatchImportStatus(true, "可粘贴 JSON 批量导入来源");
+    setAdminUserStatus(true, "仅管理员可重置其他用户密码");
+    setPendingRegistrationStatus(true, "仅管理员可审核注册");
+    setCronConvertStatus(true, "可输入自然语言自动转换 Cron");
     checkEdgeTtsUpdate(false).catch((e) => setEdgeTtsUpdateStatus(false, e.message));
   } catch (e) {
     showToast("error", e.message);

@@ -16,7 +16,9 @@
 
 - 语言（下拉选择：主流语言）
 - 时区
+- 定时任务开关（启用/停用）
 - Cron 定时表达式
+- 自然语言转 Cron（如“每天早上8点”一键转换）
 - 播客名称
 - 一键测试 Cron 配置是否有效（显示未来触发时间）
 
@@ -40,6 +42,7 @@
 
 - 默认来源为空（不自动导入）
 - 支持直接添加 RSS URL
+- 支持批量导入 RSS 配置（JSON，可让 AI 生成后粘贴导入）
 - 支持 RSSHub 路由转换为 RSS
 - 支持来源级关键词与条目上限
 - 单来源测试 / 修改 / 启停 / 删除
@@ -49,6 +52,14 @@
 - 查看每次生成记录、材料笔记、音频
 - 单条删除
 - 一键清空（数据库与文件同步删除）
+
+### 6) 登录 / 注册 / 管理员
+
+- 登录页支持注册（用户名 + 密码 + 确认密码）
+- 注册后自动切回登录页，自动填充用户名（密码留空）
+- 支持“开放注册”与“注册需管理员审核”开关
+- 管理员支持用户列表、用户禁用/启用、删除用户、重置密码
+- 管理员可审核待注册用户（通过 / 拒绝）
 
 ---
 
@@ -85,10 +96,11 @@ docker compose up -d --build
 
 1. 登录后台，先配置 `LLM`、`TTS`、`Telegram`
 2. 在“全局设置”里设置 `language / timezone / schedule_cron`
-3. 点击“测试 Cron”确认表达式生效
-4. 在“来源管理”添加 RSS 或 RSSHub 路由
-5. 点击“执行”触发一次，检查生成结果
-6. 在“播客历史”查看音频与材料
+3. 需要自动运行时，确认“定时任务开关=启用”
+4. 可先用自然语言转换 Cron，再点击“测试 Cron”确认
+5. 在“来源管理”添加 RSS 或 RSSHub 路由
+6. 点击“执行”触发一次，检查生成结果
+7. 在“播客历史”查看音频与材料
 
 ---
 
@@ -108,6 +120,7 @@ docker compose up -d --build
 - `GET /api/settings`
 - `PUT /api/settings`
 - `POST /api/test/cron`
+- `POST /api/cron/from-natural`
 - `POST /api/test/llm`
 - `POST /api/test/tts`
 - `GET /api/tts/edge-voices`
@@ -117,6 +130,7 @@ docker compose up -d --build
 - `POST /api/sources`
 - `POST /api/sources/rss`
 - `POST /api/sources/rsshub`
+- `POST /api/sources/import-rss`
 - `POST /api/sources/{id}/test`
 - `PUT /api/sources/{id}`
 - `DELETE /api/sources/{id}`
@@ -124,6 +138,15 @@ docker compose up -d --build
 - `GET /api/episodes`
 - `DELETE /api/episodes/{episode_id}`
 - `DELETE /api/episodes`
+- `GET /api/auth/register-options`
+- `POST /api/auth/register`
+- `GET /api/auth/users`
+- `POST /api/auth/users/reset-password`
+- `POST /api/auth/users/set-disabled`
+- `DELETE /api/auth/users/{username}`
+- `GET /api/auth/registrations/pending`
+- `POST /api/auth/registrations/{id}/approve`
+- `POST /api/auth/registrations/{id}/reject`
 
 ---
 
@@ -134,6 +157,8 @@ docker compose up -d --build
 - `AUTH_SECRET`（生产环境必须修改）
 - `AUTH_SESSION_TTL_HOURS`（默认：`48`）
 - `AUTH_COOKIE_SECURE`（`true/false`）
+- `AUTH_ALLOW_REGISTER`（默认：`true`）
+- `AUTH_REGISTER_REQUIRE_ADMIN_APPROVAL`（默认：`false`）
 
 ---
 

@@ -50,6 +50,11 @@ class SchedulerService:
         if not self.scheduler:
             return
 
+        enabled = bool(settings.get("schedule_enabled", True))
+        self.scheduler.remove_all_jobs()
+        if not enabled:
+            return
+
         cron = str(settings.get("schedule_cron", "0 8 * * *"))
         trigger_args = _parse_cron(cron)
         timezone = str(settings.get("timezone", "Asia/Shanghai"))
@@ -58,7 +63,6 @@ class SchedulerService:
         except Exception:
             zone = ZoneInfo("UTC")
 
-        self.scheduler.remove_all_jobs()
         self.scheduler.add_job(
             func=lambda: asyncio.create_task(self._run_scheduled()),
             trigger="cron",

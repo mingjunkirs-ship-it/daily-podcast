@@ -93,11 +93,49 @@ class LoginRequest(BaseModel):
 class AuthMeResponse(BaseModel):
     authenticated: bool
     username: str
+    is_admin: bool = False
 
 
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
+
+
+class RegisterOptionsResponse(BaseModel):
+    allow_register: bool
+    require_admin_approval: bool
+
+
+class UserRead(BaseModel):
+    id: int
+    username: str
+    created_at: datetime
+    is_admin: bool
+    disabled: bool = False
+
+
+class UserResetPasswordRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserSetDisabledRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    disabled: bool
+
+
+class PendingRegistrationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    created_at: datetime
 
 
 class ConnectionTestResponse(BaseModel):
@@ -109,6 +147,27 @@ class AddRssSourceRequest(BaseModel):
     url: str = Field(min_length=8, max_length=1000)
     name: str | None = Field(default=None, max_length=120)
     enabled: bool = True
+
+
+class BatchRssSourceItem(BaseModel):
+    url: str = Field(min_length=8, max_length=1000)
+    name: str | None = Field(default=None, max_length=120)
+    enabled: bool = True
+    keywords: str | list[str] | None = None
+    max_items: int | None = Field(default=None, ge=1, le=200)
+
+
+class ImportRssBatchRequest(BaseModel):
+    items: list[BatchRssSourceItem] = Field(default_factory=list)
+    overwrite_existing: bool = False
+
+
+class ImportRssBatchResponse(BaseModel):
+    received: int
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
 
 
 class AddRssHubSourceRequest(BaseModel):
@@ -152,6 +211,16 @@ class CronTestResponse(BaseModel):
     ok: bool
     message: str
     next_runs: list[str] = Field(default_factory=list)
+
+
+class CronNaturalRequest(BaseModel):
+    text: str = Field(min_length=2, max_length=120)
+
+
+class CronNaturalResponse(BaseModel):
+    ok: bool
+    cron: str
+    message: str
 
 
 class EdgeVoicePreviewRequest(BaseModel):

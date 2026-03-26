@@ -21,22 +21,30 @@ from sqlalchemy.orm import Session
 
 from app.config import AUDIO_DIR, FEEDS_DIR, NOTES_DIR
 from app.database import get_db, init_db
-from app.models import Episode, Source
+from app.models import AdminUser, Episode, PendingRegistration, Source
 from app.schemas import (
     AddRssHubSourceRequest,
     AddRssSourceRequest,
     AuthMeResponse,
+    BatchRssSourceItem,
     ChangePasswordRequest,
     ConnectionTestResponse,
     CronTestRequest,
     CronTestResponse,
+    CronNaturalRequest,
+    CronNaturalResponse,
     EdgeVoicePreviewRequest,
     EpisodeRead,
     ImportPresetsRequest,
     ImportPresetsResponse,
+    ImportRssBatchRequest,
+    ImportRssBatchResponse,
     LoginRequest,
+    PendingRegistrationRead,
     PromptVersionCreateRequest,
     PromptVersionRead,
+    RegisterOptionsResponse,
+    RegisterRequest,
     RSSHubTemplateRead,
     RunNowResponse,
     SettingsRead,
@@ -46,19 +54,26 @@ from app.schemas import (
     SourcePresetRead,
     SourceRead,
     SourceUpdate,
+    UserRead,
+    UserSetDisabledRequest,
+    UserResetPasswordRequest,
 )
 from app.services.pipeline import PipelineRunner
 from app.services.scheduler import SchedulerService, _parse_cron
 from app.services.auth import (
     SESSION_COOKIE_NAME,
+    auth_allow_register,
     auth_cookie_secure,
-    authenticate_admin,
+    authenticate_user,
     create_session_token,
     ensure_default_admin,
-    get_admin_by_username,
+    get_user_by_username,
+    hash_password,
+    is_admin_username,
     parse_session_token,
+    auth_register_require_admin_approval,
     session_ttl_seconds,
-    update_admin_password,
+    update_user_password,
 )
 from app.services.llm_client import LLMClient
 from app.services.rsshub_templates import list_rsshub_templates
@@ -122,8 +137,30 @@ def _username_from_cookie(request: Request) -> str | None:
 def _is_public_path(path: str) -> bool:
     if path.startswith("/static"):
         return True
-    public_exact = {"/login", "/api/auth/login", "/api/health"}
+    public_exact = {
+        "/login",
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/register-options",
+        "/api/health",
+    }
     return path in public_exact
+
+
+def _current_username(request: Request) -> str | None:
+    username = getattr(request.state, "current_username", None)
+    if username:
+        return str(username)
+    return _username_from_cookie(request)
+
+
+def _ensure_admin(request: Request) -> str:
+    username = _current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    if not is_admin_username(username):
+        raise HTTPException(status_code=403, detail="仅管理员可执行该操作")
+    return username
 
 
 def _default_source_name_from_url(url: str) -> str:
@@ -132,6 +169,164 @@ def _default_source_name_from_url(url: str) -> str:
     if host:
         return f"RSS {host}"[:120]
     return "RSS Source"
+
+
+def _validate_rss_url(url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="RSS URL 不能为空")
+    if not (value.startswith("http://") or value.startswith("https://")):
+        raise HTTPException(status_code=400, detail="RSS URL 必须以 http:// 或 https:// 开头")
+    return value
+
+
+def _normalize_rss_keywords(value: str | list[str] | None) -> str:
+    if isinstance(value, list):
+        keywords = [str(item).strip() for item in value if str(item).strip()]
+        return ", ".join(keywords)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _build_rss_source_config(item: BatchRssSourceItem) -> dict:
+    config: dict[str, object] = {"url": item.url.strip()}
+    keywords = _normalize_rss_keywords(item.keywords)
+    if keywords:
+        config["keywords"] = keywords
+    if item.max_items is not None:
+        config["max_items"] = int(item.max_items)
+    return config
+
+
+def _normalize_blocked_usernames(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        username = str(item or "").strip()
+        if not username or username in seen or is_admin_username(username):
+            continue
+        seen.add(username)
+        output.append(username)
+    return output
+
+
+def _blocked_usernames_from_settings(values: dict) -> list[str]:
+    return _normalize_blocked_usernames(values.get("auth_blocked_usernames", []))
+
+
+def _is_user_blocked(db: Session, username: str) -> bool:
+    if not username or is_admin_username(username):
+        return False
+    values = get_settings(db)
+    blocked = _blocked_usernames_from_settings(values)
+    return username in set(blocked)
+
+
+def _set_user_blocked(db: Session, username: str, disabled: bool) -> list[str]:
+    values = get_settings(db)
+    blocked = _blocked_usernames_from_settings(values)
+    blocked_set = set(blocked)
+
+    if disabled:
+        blocked_set.add(username)
+    else:
+        blocked_set.discard(username)
+
+    updated = sorted(item for item in blocked_set if item and not is_admin_username(item))
+    set_settings(db, {"auth_blocked_usernames": updated})
+    return updated
+
+
+def _parse_time_from_text(text: str) -> tuple[int, int]:
+    source = text.strip().lower()
+
+    m_hm = re.search(r"(\d{1,2})\s*[:：点时]\s*(\d{1,2})", source)
+    if m_hm:
+        hour = int(m_hm.group(1))
+        minute = int(m_hm.group(2))
+    else:
+        m_h = re.search(r"(\d{1,2})\s*(点|时|hour|hours|h)\b?", source)
+        if m_h:
+            hour = int(m_h.group(1))
+            minute = 0
+        else:
+            m_colon = re.search(r"\b(\d{1,2}):(\d{1,2})\b", source)
+            if m_colon:
+                hour = int(m_colon.group(1))
+                minute = int(m_colon.group(2))
+            else:
+                hour = 8
+                minute = 0
+
+    if any(x in source for x in ["下午", "晚上", "pm"]) and 1 <= hour <= 11:
+        hour += 12
+    if any(x in source for x in ["凌晨"]) and hour == 12:
+        hour = 0
+
+    hour = max(0, min(hour, 23))
+    minute = max(0, min(minute, 59))
+    return hour, minute
+
+
+def _weekday_from_text(text: str) -> str | None:
+    mapping = {
+        "一": "1", "二": "2", "三": "3", "四": "4", "五": "5", "六": "6", "日": "0", "天": "0",
+        "monday": "1", "tuesday": "2", "wednesday": "3", "thursday": "4", "friday": "5", "saturday": "6", "sunday": "0",
+        "mon": "1", "tue": "2", "wed": "3", "thu": "4", "fri": "5", "sat": "6", "sun": "0",
+    }
+
+    source = text.strip().lower()
+    for key, value in mapping.items():
+        if f"周{key}" in source or f"星期{key}" in source or key in source:
+            return value
+    return None
+
+
+def _cron_from_natural_text(text: str) -> tuple[str, str]:
+    source = str(text or "").strip()
+    if not source:
+        raise ValueError("请输入自然语言时间")
+
+    s = source.lower()
+    hour, minute = _parse_time_from_text(s)
+
+    if any(x in s for x in ["每小时", "每个小时", "hourly", "every hour"]):
+        return "0 * * * *", "已识别为每小时执行"
+
+    if any(x in s for x in ["每隔", "间隔"]) and "分钟" in s:
+        m = re.search(r"每隔\s*(\d{1,2})\s*分钟", s)
+        if m:
+            step = int(m.group(1))
+            if 1 <= step <= 59:
+                return f"*/{step} * * * *", f"已识别为每隔 {step} 分钟"
+
+    weekday = _weekday_from_text(s)
+    if any(x in s for x in ["每周", "weekly", "every week"]) and weekday is not None:
+        return f"{minute} {hour} * * {weekday}", "已识别为每周计划"
+
+    m_day = re.search(r"每月\s*(\d{1,2})\s*(号|日)", s)
+    if not m_day:
+        m_day = re.search(r"every month\s*(on\s*)?(\d{1,2})", s)
+        if m_day:
+            day = int(m_day.group(2))
+        else:
+            day = None
+    else:
+        day = int(m_day.group(1))
+    if day is not None:
+        day = max(1, min(day, 31))
+        return f"{minute} {hour} {day} * *", "已识别为每月计划"
+
+    if any(x in s for x in ["工作日", "weekday", "weekdays"]):
+        return f"{minute} {hour} * * 1-5", "已识别为工作日计划"
+
+    if any(x in s for x in ["每天", "每日", "daily", "every day", "每晚", "每天早上", "每天晚上"]):
+        return f"{minute} {hour} * * *", "已识别为每日计划"
+
+    raise ValueError("暂未识别该自然语言，请示例：每天早上8点 / 每周一9:30 / 每月1号8点")
 
 
 PROMPT_VERSION_KEY = "prompt_versions"
@@ -277,6 +472,17 @@ async def auth_middleware(request: Request, call_next):
 
     username = _username_from_cookie(request)
     if username:
+        db = next(get_db())
+        try:
+            if _is_user_blocked(db, username):
+                if path.startswith("/api/"):
+                    return JSONResponse(status_code=403, content={"detail": "当前账号已被管理员禁用"})
+                response = RedirectResponse(url="/login", status_code=307)
+                response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+                return response
+        finally:
+            db.close()
+
         request.state.current_username = username
         return await call_next(request)
 
@@ -304,14 +510,80 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/auth/register-options", response_model=RegisterOptionsResponse)
+def api_register_options() -> RegisterOptionsResponse:
+    return RegisterOptionsResponse(
+        allow_register=auth_allow_register(),
+        require_admin_approval=auth_register_require_admin_approval(),
+    )
+
+
+@app.post("/api/auth/register")
+def api_auth_register(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
+    if not auth_allow_register():
+        raise HTTPException(status_code=403, detail="当前未开放注册")
+
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
+    if payload.password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="两次密码输入不一致")
+
+    existing_user = get_user_by_username(db, username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+
+    pending = db.scalar(select(PendingRegistration).where(PendingRegistration.username == username))
+    require_approval = auth_register_require_admin_approval()
+
+    if require_approval:
+        if pending and pending.status == "pending":
+            raise HTTPException(status_code=400, detail="该用户名已有待审核申请")
+
+        if not pending:
+            pending = PendingRegistration(username=username)
+            db.add(pending)
+
+        pending.password_hash = hash_password(payload.password)
+        pending.status = "pending"
+        pending.created_at = datetime.now(timezone.utc)
+        pending.decided_at = None
+        pending.decided_by = None
+        db.commit()
+        return {
+            "ok": True,
+            "pending": True,
+            "message": "注册申请已提交，等待管理员审核",
+        }
+
+    user = AdminUser(username=username, password_hash=hash_password(payload.password))
+    db.add(user)
+    if pending:
+        db.delete(pending)
+    db.commit()
+    return {
+        "ok": True,
+        "pending": False,
+        "message": "注册成功，请直接登录",
+    }
+
+
 @app.post("/api/auth/login", response_model=AuthMeResponse)
 def api_auth_login(payload: LoginRequest, db: Session = Depends(get_db)) -> Response:
-    user = authenticate_admin(db, payload.username, payload.password)
+    user = authenticate_user(db, payload.username, payload.password)
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if _is_user_blocked(db, user.username):
+        raise HTTPException(status_code=403, detail="当前账号已被管理员禁用")
 
     token = create_session_token(user.username)
-    response = JSONResponse(content=AuthMeResponse(authenticated=True, username=user.username).model_dump())
+    response = JSONResponse(
+        content=AuthMeResponse(
+            authenticated=True,
+            username=user.username,
+            is_admin=is_admin_username(user.username),
+        ).model_dump()
+    )
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -333,30 +605,159 @@ def api_auth_logout() -> Response:
 
 @app.get("/api/auth/me", response_model=AuthMeResponse)
 def api_auth_me(request: Request) -> AuthMeResponse:
-    username = _username_from_cookie(request)
+    username = _current_username(request)
     if not username:
         raise HTTPException(status_code=401, detail="unauthorized")
-    return AuthMeResponse(authenticated=True, username=username)
+    return AuthMeResponse(authenticated=True, username=username, is_admin=is_admin_username(username))
 
 
 @app.post("/api/auth/change-password")
 def api_auth_change_password(payload: ChangePasswordRequest, request: Request, db: Session = Depends(get_db)) -> dict:
-    username = _username_from_cookie(request)
+    username = _current_username(request)
     if not username:
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    user = get_admin_by_username(db, username)
+    user = get_user_by_username(db, username)
     if not user:
-        raise HTTPException(status_code=404, detail="管理员不存在")
-    if not authenticate_admin(db, username, payload.current_password):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not authenticate_user(db, username, payload.current_password):
         raise HTTPException(status_code=400, detail="当前密码错误")
     if payload.current_password == payload.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
 
-    ok = update_admin_password(db, username, payload.new_password)
+    ok = update_user_password(db, username, payload.new_password)
     if not ok:
         raise HTTPException(status_code=500, detail="修改密码失败")
     return {"message": "密码修改成功"}
+
+
+@app.get("/api/auth/users", response_model=list[UserRead])
+def api_auth_users(request: Request, db: Session = Depends(get_db)) -> list[UserRead]:
+    _ensure_admin(request)
+    blocked = set(_blocked_usernames_from_settings(get_settings(db)))
+    rows = db.scalars(select(AdminUser).order_by(desc(AdminUser.created_at))).all()
+    return [
+        UserRead(
+            id=row.id,
+            username=row.username,
+            created_at=row.created_at,
+            is_admin=is_admin_username(row.username),
+            disabled=(row.username in blocked and not is_admin_username(row.username)),
+        )
+        for row in rows
+    ]
+
+
+@app.post("/api/auth/users/reset-password")
+def api_auth_reset_user_password(
+    payload: UserResetPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    admin_user = _ensure_admin(request)
+    target = payload.username.strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="目标用户名不能为空")
+
+    user = get_user_by_username(db, target)
+    if not user:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+
+    if not update_user_password(db, target, payload.new_password):
+        raise HTTPException(status_code=500, detail="重置密码失败")
+
+    return {"message": f"用户 {target} 密码已由管理员 {admin_user} 重置"}
+
+
+@app.post("/api/auth/users/set-disabled")
+def api_auth_set_user_disabled(
+    payload: UserSetDisabledRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    admin_user = _ensure_admin(request)
+    target = payload.username.strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="目标用户名不能为空")
+    if is_admin_username(target):
+        raise HTTPException(status_code=400, detail="管理员账号不允许禁用")
+
+    user = get_user_by_username(db, target)
+    if not user:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+
+    _set_user_blocked(db, target, bool(payload.disabled))
+    action = "禁用" if payload.disabled else "启用"
+    return {"message": f"管理员 {admin_user} 已{action}用户 {target}"}
+
+
+@app.delete("/api/auth/users/{username}")
+def api_auth_delete_user(username: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    admin_user = _ensure_admin(request)
+    target = username.strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="目标用户名不能为空")
+    if is_admin_username(target):
+        raise HTTPException(status_code=400, detail="管理员账号不允许删除")
+    if target == admin_user:
+        raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+
+    user = get_user_by_username(db, target)
+    if not user:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+
+    db.delete(user)
+    db.commit()
+    _set_user_blocked(db, target, False)
+    return {"message": f"已删除用户 {target}"}
+
+
+@app.get("/api/auth/registrations/pending", response_model=list[PendingRegistrationRead])
+def api_auth_pending_registrations(request: Request, db: Session = Depends(get_db)) -> list[PendingRegistrationRead]:
+    _ensure_admin(request)
+    rows = db.scalars(
+        select(PendingRegistration)
+        .where(PendingRegistration.status == "pending")
+        .order_by(desc(PendingRegistration.created_at))
+    ).all()
+    return [PendingRegistrationRead.model_validate(row) for row in rows]
+
+
+@app.post("/api/auth/registrations/{registration_id}/approve")
+def api_auth_approve_registration(registration_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    admin_user = _ensure_admin(request)
+    row = db.get(PendingRegistration, registration_id)
+    if not row or row.status != "pending":
+        raise HTTPException(status_code=404, detail="待审核记录不存在")
+
+    if get_user_by_username(db, row.username):
+        row.status = "rejected"
+        row.decided_at = datetime.now(timezone.utc)
+        row.decided_by = admin_user
+        db.commit()
+        raise HTTPException(status_code=400, detail="目标用户名已存在，已自动拒绝该申请")
+
+    user = AdminUser(username=row.username, password_hash=row.password_hash)
+    db.add(user)
+    row.status = "approved"
+    row.decided_at = datetime.now(timezone.utc)
+    row.decided_by = admin_user
+    db.commit()
+    return {"message": f"已通过用户注册：{row.username}"}
+
+
+@app.post("/api/auth/registrations/{registration_id}/reject")
+def api_auth_reject_registration(registration_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    admin_user = _ensure_admin(request)
+    row = db.get(PendingRegistration, registration_id)
+    if not row or row.status != "pending":
+        raise HTTPException(status_code=404, detail="待审核记录不存在")
+
+    row.status = "rejected"
+    row.decided_at = datetime.now(timezone.utc)
+    row.decided_by = admin_user
+    db.commit()
+    return {"message": f"已拒绝注册申请：{row.username}"}
 
 
 @app.get("/api/settings", response_model=SettingsRead)
@@ -500,6 +901,21 @@ def api_test_cron(payload: CronTestRequest) -> CronTestResponse:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cron 配置无效：{exc}")
+
+
+@app.post("/api/cron/from-natural", response_model=CronNaturalResponse)
+def api_cron_from_natural(payload: CronNaturalRequest) -> CronNaturalResponse:
+    text = str(payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="请输入自然语言时间")
+
+    try:
+        cron, message = _cron_from_natural_text(text)
+        return CronNaturalResponse(ok=True, cron=cron, message=message)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"转换失败：{exc}")
 
 
 @app.get("/api/tts/edge-version")
@@ -772,9 +1188,7 @@ def api_create_source(payload: SourceCreate, db: Session = Depends(get_db)) -> S
 
 @app.post("/api/sources/rss", response_model=SourceRead)
 def api_create_rss_source(payload: AddRssSourceRequest, db: Session = Depends(get_db)) -> SourceRead:
-    url = payload.url.strip()
-    if not (url.startswith("http://") or url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="RSS URL 必须以 http:// 或 https:// 开头")
+    url = _validate_rss_url(payload.url)
 
     name = (payload.name or "").strip() or _default_source_name_from_url(url)
     config = {"url": url}
@@ -797,6 +1211,91 @@ def api_create_rss_source(payload: AddRssSourceRequest, db: Session = Depends(ge
         last_error=row.last_error,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+@app.post("/api/sources/import-rss", response_model=ImportRssBatchResponse)
+def api_import_rss_batch(payload: ImportRssBatchRequest, db: Session = Depends(get_db)) -> ImportRssBatchResponse:
+    rows = payload.items or []
+    if not rows:
+        raise HTTPException(status_code=400, detail="items 不能为空")
+
+    existing_rss = db.scalars(select(Source).where(Source.source_type == "rss")).all()
+    existing_by_url: dict[str, Source] = {}
+    for source in existing_rss:
+        try:
+            config = json.loads(source.config_json or "{}")
+        except Exception:
+            config = {}
+        url = str(config.get("url") or "").strip()
+        if url and url not in existing_by_url:
+            existing_by_url[url] = source
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+    processed_urls: set[str] = set()
+
+    for idx, item in enumerate(rows, start=1):
+        raw_url = str(item.url or "").strip()
+        if not raw_url:
+            skipped += 1
+            errors.append(f"第{idx}条：url 不能为空")
+            continue
+
+        if raw_url in processed_urls:
+            skipped += 1
+            errors.append(f"第{idx}条：url 重复，已跳过 {raw_url}")
+            continue
+        processed_urls.add(raw_url)
+
+        try:
+            url = _validate_rss_url(raw_url)
+        except HTTPException as exc:
+            skipped += 1
+            errors.append(f"第{idx}条：{exc.detail}")
+            continue
+
+        item.url = url
+        name = (item.name or "").strip() or _default_source_name_from_url(url)
+        config = _build_rss_source_config(item)
+
+        existing = existing_by_url.get(url)
+        if existing:
+            if not payload.overwrite_existing:
+                skipped += 1
+                continue
+
+            try:
+                existing_config = json.loads(existing.config_json or "{}")
+            except Exception:
+                existing_config = {}
+            if existing_config.get("rsshub_route") and "rsshub_route" not in config:
+                config["rsshub_route"] = existing_config.get("rsshub_route")
+
+            existing.name = name
+            existing.enabled = bool(item.enabled)
+            existing.config_json = json.dumps(config, ensure_ascii=False)
+            updated += 1
+            continue
+
+        source = Source(
+            name=name,
+            source_type="rss",
+            enabled=bool(item.enabled),
+            config_json=json.dumps(config, ensure_ascii=False),
+        )
+        db.add(source)
+        created += 1
+
+    db.commit()
+    return ImportRssBatchResponse(
+        received=len(rows),
+        created=created,
+        updated=updated,
+        skipped=skipped,
+        errors=errors,
     )
 
 

@@ -14,6 +14,7 @@
         --primary: #3b82f6;
         --primary-hover: #2563eb;
         --error: #ef4444;
+        --ok: #22c55e;
         --radius: 12px;
         --radius-sm: 8px;
         --transition: 0.2s ease;
@@ -32,7 +33,7 @@
       }
 
       .login-card {
-        width: min(420px, 92vw);
+        width: min(470px, 92vw);
         padding: 32px;
         border-radius: 16px;
         border: 1px solid rgba(51, 65, 85, 0.5);
@@ -44,7 +45,7 @@
 
       .brand {
         text-align: center;
-        margin-bottom: 24px;
+        margin-bottom: 18px;
       }
       .brand-icon {
         font-size: 40px;
@@ -63,6 +64,25 @@
         color: var(--muted);
         font-size: 14px;
         margin-top: 6px;
+      }
+
+      .auth-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .auth-tab {
+        border: 1px solid rgba(51, 65, 85, 0.8);
+        border-radius: var(--radius-sm);
+        background: rgba(11, 18, 32, 0.8);
+        color: var(--text);
+        padding: 10px;
+        cursor: pointer;
+      }
+      .auth-tab.active {
+        border-color: var(--primary);
+        background: rgba(59, 130, 246, 0.18);
       }
 
       label {
@@ -125,15 +145,15 @@
       }
       @keyframes spin { to { transform: rotate(360deg); } }
 
-      .error-msg {
+      .msg {
         min-height: 20px;
         margin-top: 14px;
         padding: 0 4px;
-        color: var(--error);
         font-size: 13px;
         text-align: center;
-        transition: opacity var(--transition);
       }
+      .msg.error { color: var(--error); }
+      .msg.ok { color: var(--ok); }
 
       .hint {
         margin-top: 16px;
@@ -148,6 +168,7 @@
         border-radius: 4px;
         font-size: 12px;
       }
+      .hidden { display: none !important; }
     </style>
   </head>
   <body>
@@ -155,7 +176,12 @@
       <div class="brand">
         <span class="brand-icon">&#x1F399;</span>
         <h1>AI Podcast Builder</h1>
-        <p>请输入管理员账号访问控制台</p>
+        <p>登录或注册账号访问控制台</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" id="tabLogin">登录</button>
+        <button type="button" class="auth-tab" id="tabRegister">注册</button>
       </div>
 
       <form id="loginForm">
@@ -168,25 +194,101 @@
         <button type="submit" class="submit-btn" id="submitBtn">登录</button>
       </form>
 
-      <div class="error-msg" id="errorMsg"></div>
-      <div class="hint">默认账号：<code>admin</code> / <code>adminadmin</code></div>
+      <form id="registerForm" class="hidden">
+        <label for="regUsername">用户名</label>
+        <input id="regUsername" autocomplete="username" placeholder="请输入用户名" required />
+
+        <label for="regPassword">密码（至少 8 位）</label>
+        <input id="regPassword" type="password" autocomplete="new-password" placeholder="请输入密码" required />
+
+        <label for="regConfirmPassword">确认密码</label>
+        <input id="regConfirmPassword" type="password" autocomplete="new-password" placeholder="请再次输入密码" required />
+
+        <button type="submit" class="submit-btn" id="registerBtn">注册</button>
+      </form>
+
+      <div class="msg" id="authMsg"></div>
+      <div class="hint" id="registerHint">默认管理员：<code>admin</code> / <code>adminadmin</code></div>
     </div>
 
     <script>
-      const form = document.getElementById("loginForm");
-      const errorMsg = document.getElementById("errorMsg");
-      const submitBtn = document.getElementById("submitBtn");
+      const qs = (id) => document.getElementById(id);
+      const tabLogin = qs("tabLogin");
+      const tabRegister = qs("tabRegister");
+      const loginForm = qs("loginForm");
+      const registerForm = qs("registerForm");
+      const submitBtn = qs("submitBtn");
+      const registerBtn = qs("registerBtn");
+      const authMsg = qs("authMsg");
+      const registerHint = qs("registerHint");
 
-      form.addEventListener("submit", async (event) => {
+      let registerOptions = { allow_register: false, require_admin_approval: false };
+
+      function setMsg(type, text) {
+        authMsg.className = `msg ${type}`;
+        authMsg.textContent = text || "";
+      }
+
+      function setLoading(btn, loading, text) {
+        if (!btn) return;
+        if (loading) {
+          btn.disabled = true;
+          btn._orig = btn.textContent;
+          btn.innerHTML = `<span class="btn-spinner"></span> ${text}`;
+        } else {
+          btn.disabled = false;
+          btn.textContent = btn._orig || btn.textContent;
+        }
+      }
+
+      function switchMode(mode) {
+        const isLogin = mode === "login";
+        tabLogin.classList.toggle("active", isLogin);
+        tabRegister.classList.toggle("active", !isLogin);
+        loginForm.classList.toggle("hidden", !isLogin);
+        registerForm.classList.toggle("hidden", isLogin);
+        setMsg("", "");
+      }
+
+      async function loadRegisterOptions() {
+        try {
+          const res = await fetch("/api/auth/register-options");
+          if (!res.ok) throw new Error("failed");
+          registerOptions = await res.json();
+        } catch {
+          registerOptions = { allow_register: false, require_admin_approval: false };
+        }
+
+        if (!registerOptions.allow_register) {
+          tabRegister.disabled = true;
+          tabRegister.classList.remove("active");
+          registerHint.textContent = "当前系统未开放注册，请联系管理员。";
+          switchMode("login");
+          return;
+        }
+
+        registerHint.textContent = registerOptions.require_admin_approval
+          ? "当前注册需要管理员审核通过后才能登录。"
+          : "注册成功后可直接登录。";
+      }
+
+      tabLogin.addEventListener("click", () => switchMode("login"));
+      tabRegister.addEventListener("click", () => {
+        if (!registerOptions.allow_register) {
+          setMsg("error", "当前系统未开放注册");
+          return;
+        }
+        switchMode("register");
+      });
+
+      loginForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        errorMsg.textContent = "";
+        setMsg("", "");
 
-        const username = document.getElementById("username").value.trim();
-        const password = document.getElementById("password").value;
+        const username = qs("username").value.trim();
+        const password = qs("password").value;
 
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span class="btn-spinner"></span> 登录中...';
-
+        setLoading(submitBtn, true, "登录中...");
         try {
           const res = await fetch("/api/auth/login", {
             method: "POST",
@@ -198,12 +300,68 @@
             throw new Error(text || "登录失败");
           }
           window.location.href = "/";
-        } catch (error) {
-          errorMsg.textContent = "登录失败，请检查用户名或密码。";
-          submitBtn.disabled = false;
-          submitBtn.innerHTML = "登录";
+        } catch {
+          setMsg("error", "登录失败，请检查用户名或密码");
+        } finally {
+          setLoading(submitBtn, false, "登录");
         }
       });
+
+      registerForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setMsg("", "");
+
+        if (!registerOptions.allow_register) {
+          setMsg("error", "当前系统未开放注册");
+          return;
+        }
+
+        const username = qs("regUsername").value.trim();
+        const password = qs("regPassword").value;
+        const confirmPassword = qs("regConfirmPassword").value;
+
+        if (!username || !password || !confirmPassword) {
+          setMsg("error", "请完整填写注册信息");
+          return;
+        }
+        if (password !== confirmPassword) {
+          setMsg("error", "两次密码输入不一致");
+          return;
+        }
+
+        setLoading(registerBtn, true, "注册中...");
+        try {
+          const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username,
+              password,
+              confirm_password: confirmPassword,
+            }),
+          });
+          const text = await res.text();
+          if (!res.ok) {
+            throw new Error(text || "注册失败");
+          }
+
+          const payload = text ? JSON.parse(text) : {};
+          setMsg("ok", payload.message || "注册成功");
+          qs("regPassword").value = "";
+          qs("regConfirmPassword").value = "";
+          if (!payload.pending) {
+            qs("username").value = username;
+            qs("password").value = "";
+            switchMode("login");
+          }
+        } catch (error) {
+          setMsg("error", error.message || "注册失败");
+        } finally {
+          setLoading(registerBtn, false, "注册");
+        }
+      });
+
+      loadRegisterOptions();
     </script>
   </body>
 </html>
