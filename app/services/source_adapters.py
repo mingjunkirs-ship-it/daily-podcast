@@ -139,6 +139,19 @@ async def _from_newsapi(source: Source, config: dict[str, Any], settings: dict[s
     return items
 
 
+def _filter_by_keywords(items: list[NormalizedItem], keywords_text: str) -> list[NormalizedItem]:
+    """Per-source keyword filtering (same logic as pipeline global filter)."""
+    keywords = [kw.strip().lower() for kw in keywords_text.split(",") if kw.strip()]
+    if not keywords:
+        return items
+    filtered: list[NormalizedItem] = []
+    for item in items:
+        haystack = " ".join([item.title, item.summary, item.content, " ".join(item.tags)]).lower()
+        if any(kw in haystack for kw in keywords):
+            filtered.append(item)
+    return filtered
+
+
 async def fetch_and_transform_source(source: Source, settings: dict[str, Any]) -> tuple[list[NormalizedItem], str]:
     config = {}
     if source.config_json:
@@ -156,8 +169,15 @@ async def fetch_and_transform_source(source: Source, settings: dict[str, Any]) -
     else:
         raise ValueError(f"不支持的 source_type: {source_type}")
 
-    max_items = int(settings.get("max_items_per_source", 20))
+    # Per-source keywords filtering (config.keywords overrides global)
+    source_keywords = str(config.get("keywords", "")).strip()
+    if source_keywords:
+        items = _filter_by_keywords(items, source_keywords)
+
+    # Per-source max_items (config.max_items overrides global)
+    max_items = int(config.get("max_items") or settings.get("max_items_per_source", 20))
     items = items[: max(1, max_items)]
+
     rss_xml = build_rss_xml(
         feed_title=f"{source.name} Converted Feed",
         feed_link="https://localhost/internal",

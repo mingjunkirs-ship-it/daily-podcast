@@ -191,7 +191,7 @@ class LLMClient:
         episode_template = str(
             self.settings.get(
                 "llm_episode_prompt_template",
-                "请用 {language} 生成播客脚本，主持风格为：{host_style}。"
+                "请用 {language} 生成播客脚本。"
                 "输出严格 JSON 对象，字段 title, overview, script。"
                 "script 是可以直接用于 TTS 的完整播报稿，长度 1200-2400 汉字。",
             )
@@ -237,7 +237,7 @@ class LLMClient:
                 lines.append(f"这条信息的意义是：{item['impact']}。")
             lines.append("以上是今天的播报，感谢收听。")
             return {
-                "title": f"{podcast_name} | 自动降级稿",
+                "title": f"{podcast_name} | {summaries[0]['title'][:60]}",
                 "overview": "LLM 长文本生成超时，已自动使用降级脚本",
                 "script": "\n".join(lines),
             }

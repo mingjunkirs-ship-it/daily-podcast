@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import httpx
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -24,6 +28,9 @@ from app.schemas import (
     AuthMeResponse,
     ChangePasswordRequest,
     ConnectionTestResponse,
+    CronTestRequest,
+    CronTestResponse,
+    EdgeVoicePreviewRequest,
     EpisodeRead,
     ImportPresetsRequest,
     ImportPresetsResponse,
@@ -41,7 +48,7 @@ from app.schemas import (
     SourceUpdate,
 )
 from app.services.pipeline import PipelineRunner
-from app.services.scheduler import SchedulerService
+from app.services.scheduler import SchedulerService, _parse_cron
 from app.services.auth import (
     SESSION_COOKIE_NAME,
     auth_cookie_secure,
@@ -170,6 +177,31 @@ def _normalize_prompt_versions(values: dict) -> list[dict]:
             }
         )
     return output
+
+
+def _edge_version_key(raw: str) -> tuple[int, ...]:
+    cleaned = str(raw or "").strip().lstrip("vV")
+    if not cleaned:
+        return ()
+    parts: list[int] = []
+    for seg in cleaned.split("."):
+        m = re.match(r"(\d+)", seg)
+        if not m:
+            break
+        parts.append(int(m.group(1)))
+    return tuple(parts)
+
+
+def _is_edge_update_available(installed: str, latest: str) -> bool:
+    installed_key = _edge_version_key(installed)
+    latest_key = _edge_version_key(latest)
+    if not installed_key or not latest_key:
+        return False
+
+    size = max(len(installed_key), len(latest_key))
+    installed_key += (0,) * (size - len(installed_key))
+    latest_key += (0,) * (size - len(latest_key))
+    return latest_key > installed_key
 
 
 @app.middleware("http")
@@ -340,6 +372,116 @@ async def api_test_tts_connection(db: Session = Depends(get_db)) -> ConnectionTe
     return ConnectionTestResponse(ok=ok, message=message)
 
 
+@app.post("/api/test/edge-voice")
+async def api_test_edge_voice(payload: EdgeVoicePreviewRequest, db: Session = Depends(get_db)) -> Response:
+    voice = str(payload.voice or "").strip()
+    if not voice:
+        raise HTTPException(status_code=400, detail="voice 不能为空")
+
+    sample_text = f"我是{voice}"
+
+    settings = get_settings(db)
+    preview_settings = dict(settings)
+    preview_settings["tts_enabled"] = True
+    preview_settings["tts_provider"] = "edge_tts"
+    preview_settings["tts_voice"] = voice
+    if payload.audio_speed is not None:
+        preview_settings["tts_audio_speed"] = float(payload.audio_speed)
+
+    tts = TTSClient(preview_settings)
+    ok, audio_bytes, message = await tts._request_edge_tts(sample_text)
+    if not ok or not audio_bytes:
+        raise HTTPException(status_code=400, detail=f"音色试听失败：{message}")
+
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.post("/api/test/cron", response_model=CronTestResponse)
+def api_test_cron(payload: CronTestRequest) -> CronTestResponse:
+    cron = str(payload.schedule_cron or "").strip()
+    if not cron:
+        raise HTTPException(status_code=400, detail="Cron 表达式不能为空")
+
+    timezone_name = str(payload.timezone or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    timezone_note = ""
+    try:
+        zone = ZoneInfo(timezone_name)
+    except Exception:
+        zone = timezone.utc
+        timezone_note = f"（时区 {timezone_name} 不可用，已按 UTC 测试）"
+
+    try:
+        trigger_args = _parse_cron(cron)
+        trigger = CronTrigger(timezone=zone, **trigger_args)
+        now = datetime.now(zone)
+
+        next_runs: list[str] = []
+        previous = None
+        for _ in range(3):
+            nxt = trigger.get_next_fire_time(previous, now if previous is None else previous)
+            if not nxt:
+                break
+            next_runs.append(nxt.isoformat())
+            previous = nxt
+
+        if not next_runs:
+            return CronTestResponse(ok=True, message="Cron 可解析，但未计算到下一次触发时间", next_runs=[])
+
+        return CronTestResponse(
+            ok=True,
+            message=f"Cron 配置有效（时区：{timezone_name}）{timezone_note}",
+            next_runs=next_runs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cron 配置无效：{exc}")
+
+
+@app.get("/api/tts/edge-version")
+async def api_edge_tts_version() -> dict:
+    installed = "unknown"
+    try:
+        installed = package_version("edge-tts")
+    except PackageNotFoundError:
+        installed = "not-installed"
+    except Exception:
+        installed = "unknown"
+
+    latest = "unknown"
+    message = ""
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            resp = await client.get("https://api.github.com/repos/rany2/edge-tts/releases/latest")
+            if resp.status_code >= 300:
+                raise RuntimeError(f"GitHub API HTTP {resp.status_code}")
+            payload = resp.json()
+            latest = str(payload.get("tag_name") or payload.get("name") or "").strip().lstrip("vV") or "unknown"
+    except Exception as exc:
+        message = f"检查更新失败：{exc}"
+
+    update_available = _is_edge_update_available(installed, latest)
+    if not message:
+        if installed == "not-installed":
+            message = "edge-tts 未安装"
+        elif latest == "unknown":
+            message = "已读取本地版本，暂未获取到 GitHub 最新版本"
+        elif update_available:
+            message = f"检测到新版本 {latest}，当前为 {installed}"
+        else:
+            message = f"当前已是最新版本（{installed}）"
+
+    return {
+        "ok": True,
+        "installed_version": installed,
+        "latest_version": latest,
+        "update_available": update_available,
+        "message": message,
+        "repo": "https://github.com/rany2/edge-tts",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/api/tts/edge-voices")
 async def api_edge_tts_voices() -> dict:
     fallback = {
@@ -350,27 +492,27 @@ async def api_edge_tts_voices() -> dict:
                 "code": "zh-CN",
                 "name": "中文（简体）",
                 "voices": [
-                    {"name": "zh-CN-XiaoxiaoNeural", "label": "zh-CN-XiaoxiaoNeural"},
-                    {"name": "zh-CN-YunxiNeural", "label": "zh-CN-YunxiNeural"},
-                    {"name": "zh-CN-YunjianNeural", "label": "zh-CN-YunjianNeural"},
-                    {"name": "zh-CN-XiaoyiNeural", "label": "zh-CN-XiaoyiNeural"},
+                    {"name": "zh-CN-XiaoxiaoNeural", "label": "晓晓 (女声，温暖自然)"},
+                    {"name": "zh-CN-YunxiNeural", "label": "云希 (男声，沉稳)"},
+                    {"name": "zh-CN-YunjianNeural", "label": "云健 (男声，阳刚)"},
+                    {"name": "zh-CN-XiaoyiNeural", "label": "晓伊 (女声，活泼)"},
                 ],
             },
             {
                 "code": "en-US",
                 "name": "English (US)",
                 "voices": [
-                    {"name": "en-US-AriaNeural", "label": "en-US-AriaNeural"},
-                    {"name": "en-US-JennyNeural", "label": "en-US-JennyNeural"},
-                    {"name": "en-US-GuyNeural", "label": "en-US-GuyNeural"},
+                    {"name": "en-US-AriaNeural", "label": "Aria (Female, Warm)"},
+                    {"name": "en-US-JennyNeural", "label": "Jenny (Female, Friendly)"},
+                    {"name": "en-US-GuyNeural", "label": "Guy (Male, Casual)"},
                 ],
             },
             {
                 "code": "ja-JP",
                 "name": "日本語",
                 "voices": [
-                    {"name": "ja-JP-NanamiNeural", "label": "ja-JP-NanamiNeural"},
-                    {"name": "ja-JP-KeitaNeural", "label": "ja-JP-KeitaNeural"},
+                    {"name": "ja-JP-NanamiNeural", "label": "七海 (女性、明るい)"},
+                    {"name": "ja-JP-KeitaNeural", "label": "圭太 (男性、落ち着き)"},
                 ],
             },
         ],
@@ -381,6 +523,90 @@ async def api_edge_tts_voices() -> dict:
 
     try:
         rows = await edge_tts.list_voices()
+
+        # Locale → native language name mapping
+        _locale_names: dict[str, str] = {
+            "zh-CN": "中文（简体）", "zh-TW": "中文（繁體）", "zh-HK": "中文（香港）",
+            "en-US": "English (US)", "en-GB": "English (UK)", "en-AU": "English (AU)",
+            "en-IN": "English (IN)", "en-CA": "English (CA)",
+            "ja-JP": "日本語", "ko-KR": "한국어",
+            "fr-FR": "Français (FR)", "fr-CA": "Français (CA)",
+            "de-DE": "Deutsch", "es-ES": "Español (ES)", "es-MX": "Español (MX)",
+            "pt-BR": "Português (BR)", "pt-PT": "Português (PT)",
+            "it-IT": "Italiano", "ru-RU": "Русский",
+            "ar-SA": "العربية", "hi-IN": "हिन्दी", "th-TH": "ไทย",
+            "vi-VN": "Tiếng Việt", "id-ID": "Bahasa Indonesia",
+            "nl-NL": "Nederlands", "pl-PL": "Polski", "sv-SE": "Svenska",
+            "tr-TR": "Türkçe", "uk-UA": "Українська", "cs-CZ": "Čeština",
+            "da-DK": "Dansk", "fi-FI": "Suomi", "el-GR": "Ελληνικά",
+            "he-IL": "עברית", "hu-HU": "Magyar", "nb-NO": "Norsk",
+            "ro-RO": "Română", "sk-SK": "Slovenčina",
+            "ms-MY": "Bahasa Melayu", "fil-PH": "Filipino",
+        }
+
+        # Gender labels per locale prefix
+        def _gender_label(locale: str, gender: str) -> str:
+            g = gender.lower()
+            lang = locale.split("-")[0]
+            if lang == "zh":
+                return "女声" if g == "female" else "男声"
+            if lang == "ja":
+                return "女性" if g == "female" else "男性"
+            if lang == "ko":
+                return "여성" if g == "female" else "남성"
+            if lang == "ru":
+                return "Женский" if g == "female" else "Мужской"
+            if lang == "es":
+                return "Femenina" if g == "female" else "Masculina"
+            if lang == "fr":
+                return "Féminine" if g == "female" else "Masculine"
+            if lang == "de":
+                return "Weiblich" if g == "female" else "Männlich"
+            if lang == "pt":
+                return "Feminina" if g == "female" else "Masculina"
+            return "Female" if g == "female" else "Male"
+
+        _voice_aliases: dict[str, dict[str, str]] = {
+            "zh-CN": {
+                "Xiaoxiao": "晓晓", "Yunxi": "云希", "Yunjian": "云健", "Xiaoyi": "晓伊",
+                "Yunyang": "云扬", "Xiaomo": "晓墨", "Xiaorui": "晓睿", "Xiaoshuang": "晓双",
+                "Xiaohan": "晓涵", "Xiaochen": "晓辰",
+            },
+            "zh-TW": {"HsiaoChen": "曉臻", "YunJhe": "雲哲", "HsiaoYu": "曉雨"},
+            "zh-HK": {"HiuGaai": "曉佳", "WanLung": "雲龍", "HiuMaan": "曉曼"},
+            "ja-JP": {"Nanami": "七海", "Keita": "圭太", "Aoi": "葵", "Daichi": "大地"},
+            "ko-KR": {"SunHi": "선희", "InJoon": "인준", "JiMin": "지민", "SeoHyeon": "서현"},
+            "ru-RU": {"Svetlana": "Светлана", "Dmitry": "Дмитрий"},
+            "es-ES": {"Elvira": "Elvira", "Alvaro": "Álvaro", "Ximena": "Ximena"},
+            "fr-FR": {"Denise": "Denise", "Eloise": "Éloïse", "Henri": "Henri"},
+            "de-DE": {"Katja": "Katja", "Conrad": "Conrad", "Florian": "Florian"},
+            "pt-BR": {"Francisca": "Francisca", "Antonio": "Antônio", "Brenda": "Brenda"},
+            "en-US": {"Aria": "Aria", "Jenny": "Jenny", "Guy": "Guy", "Sara": "Sara", "Davis": "Davis"},
+            "en-GB": {"Sonia": "Sonia", "Ryan": "Ryan", "Maisie": "Maisie", "Thomas": "Thomas"},
+        }
+
+        def _voice_alias(locale: str, char_name: str) -> str:
+            local = _voice_aliases.get(locale, {})
+            if char_name in local:
+                return local[char_name]
+            lang = locale.split("-")[0]
+            for key, mapping in _voice_aliases.items():
+                if key.startswith(f"{lang}-") and char_name in mapping:
+                    return mapping[char_name]
+            return char_name
+
+        def _build_label(short_name: str, locale: str, gender: str) -> str:
+            char_name = short_name.rsplit("-", 1)[-1].replace("Neural", "").strip()
+            alias = _voice_alias(locale, char_name)
+            g = _gender_label(locale, gender) if gender else ""
+
+            if alias != char_name:
+                base = f"{alias} ({char_name})"
+            else:
+                base = char_name
+
+            return f"{base} · {g}" if g else base
+
         grouped: dict[str, dict] = {}
         for item in rows:
             if not isinstance(item, dict):
@@ -391,22 +617,18 @@ async def api_edge_tts_voices() -> dict:
                 continue
 
             gender = str(item.get("Gender") or "").strip()
-            friendly = str(item.get("FriendlyName") or "").strip()
-            label_parts = [short_name]
-            if gender:
-                label_parts.append(gender)
-            if friendly:
-                label_parts.append(friendly)
+            label = _build_label(short_name, locale, gender)
 
+            locale_name = _locale_names.get(locale, locale)
             group = grouped.setdefault(
                 locale,
                 {
                     "code": locale,
-                    "name": locale,
+                    "name": locale_name,
                     "voices": [],
                 },
             )
-            group["voices"].append({"name": short_name, "label": " | ".join(label_parts)})
+            group["voices"].append({"name": short_name, "label": label})
 
         languages = []
         for key in sorted(grouped.keys()):
@@ -661,6 +883,17 @@ async def api_rebuild_feeds() -> dict:
     return {"ok": True, **result}
 
 
+def _remove_episode_files(episode: Episode) -> None:
+    if episode.audio_file:
+        audio_path = AUDIO_DIR / episode.audio_file
+        if audio_path.is_file():
+            audio_path.unlink(missing_ok=True)
+    if episode.notes_file:
+        notes_path = NOTES_DIR / episode.notes_file
+        if notes_path.is_file():
+            notes_path.unlink(missing_ok=True)
+
+
 @app.get("/api/episodes", response_model=list[EpisodeRead])
 def api_list_episodes(db: Session = Depends(get_db)) -> list[EpisodeRead]:
     rows = db.scalars(select(Episode).order_by(desc(Episode.created_at)).limit(30)).all()
@@ -673,6 +906,38 @@ def api_get_episode(episode_id: int, db: Session = Depends(get_db)) -> EpisodeRe
     if not row:
         raise HTTPException(status_code=404, detail="episode not found")
     return EpisodeRead.model_validate(row)
+
+
+@app.delete("/api/episodes/{episode_id}")
+def api_delete_episode(episode_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(Episode, episode_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="episode not found")
+
+    status = str(row.status or "").lower()
+    if status in {"pending", "running"}:
+        raise HTTPException(status_code=400, detail="episode 正在执行，暂不允许删除")
+
+    _remove_episode_files(row)
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": episode_id}
+
+
+@app.delete("/api/episodes")
+def api_clear_episodes(db: Session = Depends(get_db)) -> dict:
+    rows = db.scalars(select(Episode)).all()
+    running = [row.id for row in rows if str(row.status or "").lower() in {"pending", "running"}]
+    if running:
+        raise HTTPException(status_code=400, detail=f"存在执行中任务，暂不能清空：{running[:5]}")
+
+    deleted = 0
+    for row in rows:
+        _remove_episode_files(row)
+        db.delete(row)
+        deleted += 1
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/rss/sources/{source_id}.xml")

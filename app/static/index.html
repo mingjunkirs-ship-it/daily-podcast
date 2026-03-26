@@ -7,94 +7,354 @@
     <style>
       :root {
         --bg: #0f172a;
-        --card: #111827;
+        --bg-gradient-start: #020617;
+        --bg-gradient-end: #0f172a;
+        --card: rgba(17, 24, 39, 0.7);
+        --card-solid: #111827;
         --line: #334155;
         --text: #e2e8f0;
         --muted: #94a3b8;
         --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --primary-active: #1d4ed8;
+        --success: #22c55e;
+        --success-bg: rgba(34, 197, 94, 0.1);
+        --warning: #f59e0b;
+        --warning-bg: rgba(245, 158, 11, 0.1);
+        --error: #ef4444;
+        --error-bg: rgba(239, 68, 68, 0.1);
+        --info: #3b82f6;
+        --info-bg: rgba(59, 130, 246, 0.1);
+        --radius: 12px;
+        --radius-sm: 8px;
+        --radius-lg: 16px;
+        --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+        --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.4);
+        --transition: 0.2s ease;
+        --transition-slow: 0.35s ease;
+        --input-bg: rgba(11, 18, 32, 0.8);
+        --nav-height: 60px;
       }
-      * { box-sizing: border-box; }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { scroll-behavior: smooth; }
+
       body {
-        margin: 0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        background: linear-gradient(180deg, #020617, #0f172a);
+        background: linear-gradient(180deg, var(--bg-gradient-start), var(--bg-gradient-end));
         color: var(--text);
+        min-height: 100vh;
       }
-      .container {
+
+      /* === Top Navigation === */
+      .navbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 24px;
+        height: var(--nav-height);
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+        box-shadow: var(--shadow-sm);
+      }
+      .navbar .brand {
+        font-size: 18px;
+        font-weight: 700;
+        background: linear-gradient(135deg, #60a5fa, #a78bfa);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        white-space: nowrap;
+      }
+      .navbar .brand-icon {
+        font-size: 22px;
+        margin-right: 4px;
+      }
+      .navbar .spacer { flex: 1; }
+      .navbar .user-info {
+        font-size: 13px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .navbar .nav-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      /* === Tab Navigation === */
+      .tab-bar {
+        display: flex;
+        gap: 4px;
+        padding: 12px 24px 0;
+        background: transparent;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .tab-bar::-webkit-scrollbar { height: 0; }
+      .tab-btn {
+        border: none;
+        background: rgba(30, 41, 59, 0.5);
+        color: var(--muted);
+        padding: 10px 20px;
+        border-radius: var(--radius) var(--radius) 0 0;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all var(--transition);
+        white-space: nowrap;
+        position: relative;
+      }
+      .tab-btn:hover {
+        color: var(--text);
+        background: rgba(30, 41, 59, 0.8);
+      }
+      .tab-btn.active {
+        color: var(--primary);
+        background: var(--card);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .tab-btn.active::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 16px;
+        right: 16px;
+        height: 2px;
+        background: var(--primary);
+        border-radius: 2px 2px 0 0;
+      }
+      .tab-btn .tab-icon { margin-right: 6px; }
+
+      /* === Main Content === */
+      .main-content {
         max-width: 1200px;
         margin: 0 auto;
-        padding: 20px;
+        padding: 16px 24px 40px;
       }
-      h1, h2 { margin: 0 0 12px; }
-      .hint { color: var(--muted); margin-top: 8px; font-size: 13px; }
-      .grid {
+      .tab-panel {
+        display: none;
+        animation: fadeIn 0.25s ease;
+      }
+      .tab-panel.active { display: block; }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      /* === Cards / Glassmorphism === */
+      .card {
+        background: var(--card);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: var(--shadow-sm);
+        transition: border-color var(--transition);
+      }
+      .card:hover { border-color: rgba(59, 130, 246, 0.2); }
+      .card-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .card-title .icon { font-size: 18px; }
+
+      /* === Fieldset Groups === */
+      .field-group {
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        border-radius: var(--radius);
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .field-group-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+      }
+
+      /* === Grid layouts === */
+      .grid-2 {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 16px;
       }
-      .card {
-        background: rgba(17, 24, 39, 0.9);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 16px;
-      }
-      .card.full { grid-column: 1 / -1; }
+
+      /* === Forms === */
+      h2 { margin: 0 0 12px; font-size: 18px; }
+      h3 { margin: 0 0 8px; font-size: 16px; }
+      .hint { color: var(--muted); margin-top: 8px; font-size: 13px; line-height: 1.5; }
       .row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
-      .col { flex: 1; }
-      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+      .col { flex: 1; min-width: 0; }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+        font-weight: 500;
+      }
+
       input, textarea, select {
         width: 100%;
-        border: 1px solid #374151;
-        background: #0b1220;
+        border: 1px solid rgba(55, 65, 81, 0.8);
+        background: var(--input-bg);
         color: var(--text);
-        padding: 10px;
-        border-radius: 8px;
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        font-size: 14px;
+        transition: border-color var(--transition), box-shadow var(--transition);
+        outline: none;
       }
-      textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      input:focus, textarea:focus, select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      }
+      textarea {
+        min-height: 90px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        resize: vertical;
+      }
+      input::placeholder, textarea::placeholder { color: rgba(148, 163, 184, 0.5); }
+
+      /* === Buttons === */
       button {
         border: 0;
-        background: #1f2937;
+        background: rgba(31, 41, 55, 0.8);
         color: var(--text);
-        padding: 10px 14px;
-        border-radius: 8px;
+        padding: 10px 16px;
+        border-radius: var(--radius-sm);
         cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all var(--transition);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        position: relative;
+        overflow: hidden;
+        white-space: nowrap;
       }
-      button.primary { background: var(--primary); }
-      button.warn { background: #b91c1c; }
-      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
-      .list { display: flex; flex-direction: column; gap: 10px; }
+      button:hover { background: rgba(55, 65, 81, 0.9); transform: translateY(-1px); }
+      button:active { transform: translateY(0); }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+
+      button.primary {
+        background: var(--primary);
+        color: #fff;
+      }
+      button.primary:hover { background: var(--primary-hover); }
+      button.primary:active { background: var(--primary-active); }
+
+      button.warn { background: rgba(185, 28, 28, 0.8); }
+      button.warn:hover { background: rgba(220, 38, 38, 0.9); }
+
+      button.sm {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+
+      button.nav-btn {
+        padding: 8px 14px;
+        font-size: 13px;
+        background: rgba(31, 41, 55, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+      }
+      button.nav-btn:hover { background: rgba(55, 65, 81, 0.8); }
+      button.nav-btn.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+      }
+
+      /* Button loading spinner */
+      .btn-spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Ripple effect */
+      button .ripple {
+        position: absolute;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.15);
+        transform: scale(0);
+        animation: ripple 0.5s ease-out;
+        pointer-events: none;
+      }
+      @keyframes ripple { to { transform: scale(4); opacity: 0; } }
+
+      /* === Action bar === */
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; align-items: center; }
+
+      /* === Lists === */
+      .list { display: flex; flex-direction: column; gap: 12px; }
       .item {
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 12px;
-        background: #0b1220;
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        border-radius: var(--radius);
+        padding: 16px;
+        background: var(--input-bg);
+        transition: border-color var(--transition), box-shadow var(--transition);
       }
+      .item:hover {
+        border-color: rgba(59, 130, 246, 0.3);
+        box-shadow: var(--shadow-sm);
+      }
+
+      /* === Status pills === */
       .small { font-size: 12px; color: var(--muted); }
       .pill {
         display: inline-flex;
         align-items: center;
-        padding: 2px 8px;
+        gap: 4px;
+        padding: 3px 10px;
         border-radius: 999px;
-        font-size: 12px;
-        border: 1px solid #475569;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+        border: 1px solid rgba(71, 85, 105, 0.5);
         color: #cbd5e1;
+        background: rgba(71, 85, 105, 0.15);
       }
-      .ok { color: #86efac; border-color: #166534; }
-      .fail { color: #fca5a5; border-color: #991b1b; }
-      .progress-track {
-        width: 100%;
-        height: 8px;
-        border-radius: 999px;
-        background: #1e293b;
-        overflow: hidden;
-        border: 1px solid #334155;
-        margin: 6px 0 8px;
+      .pill.ok {
+        color: var(--success);
+        border-color: rgba(34, 197, 94, 0.3);
+        background: var(--success-bg);
       }
-      .progress-bar {
-        height: 100%;
-        background: linear-gradient(90deg, #2563eb, #22c55e);
-        transition: width 0.25s ease;
+      .pill.fail {
+        color: var(--error);
+        border-color: rgba(239, 68, 68, 0.3);
+        background: var(--error-bg);
       }
+      .ok { color: var(--success); }
+      .fail { color: var(--error); }
+
+      /* === Secret inline === */
       .secret-inline {
         display: flex;
         gap: 8px;
@@ -102,132 +362,326 @@
       }
       .secret-inline input { flex: 1; }
       .secret-inline button { white-space: nowrap; }
+
+      /* === Misc === */
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      a { color: #93c5fd; }
-      @media (max-width: 900px) {
-        .grid { grid-template-columns: 1fr; }
+      a { color: #93c5fd; text-decoration: none; transition: color var(--transition); }
+      a:hover { color: #bfdbfe; text-decoration: underline; }
+
+      /* === Toast Container === */
+      .toast-container {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        pointer-events: none;
+      }
+      .toast {
+        pointer-events: auto;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px 16px;
+        border-radius: var(--radius);
+        border: 1px solid;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow);
+        min-width: 280px;
+        max-width: 420px;
+        animation: toastIn 0.3s ease;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      .toast.removing { animation: toastOut 0.25s ease forwards; }
+      .toast.success {
+        background: rgba(17, 24, 39, 0.95);
+        border-color: rgba(34, 197, 94, 0.4);
+        color: var(--success);
+      }
+      .toast.error {
+        background: rgba(17, 24, 39, 0.95);
+        border-color: rgba(239, 68, 68, 0.4);
+        color: var(--error);
+      }
+      .toast.info {
+        background: rgba(17, 24, 39, 0.95);
+        border-color: rgba(59, 130, 246, 0.4);
+        color: var(--info);
+      }
+      .toast-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+      .toast-msg { flex: 1; }
+      .toast-close {
+        background: none;
+        border: none;
+        color: inherit;
+        opacity: 0.6;
+        cursor: pointer;
+        padding: 0;
+        font-size: 16px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .toast-close:hover { opacity: 1; transform: none; background: none; }
+      @keyframes toastIn {
+        from { opacity: 0; transform: translateX(40px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes toastOut {
+        from { opacity: 1; transform: translateX(0); }
+        to { opacity: 0; transform: translateX(40px); }
+      }
+
+      /* === Confirm Modal === */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.2s ease;
+      }
+      .modal-box {
+        background: var(--card-solid);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        padding: 28px;
+        min-width: 320px;
+        max-width: 440px;
+        box-shadow: var(--shadow-lg);
+      }
+      .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+      .modal-body { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+      .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+      /* === Empty State === */
+      .empty-state {
+        text-align: center;
+        padding: 48px 20px;
+        color: var(--muted);
+      }
+      .empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+      .empty-state .empty-title { font-size: 16px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
+      .empty-state .empty-desc { font-size: 13px; }
+
+      /* === Audio player === */
+      audio {
+        width: 100%;
+        margin-top: 10px;
+        border-radius: var(--radius-sm);
+        height: 40px;
+      }
+
+      /* === Responsive === */
+      @media (max-width: 768px) {
+        .navbar { padding: 0 16px; }
+        .navbar .brand { font-size: 15px; }
+        .tab-bar { padding: 8px 16px 0; }
+        .tab-btn { padding: 8px 14px; font-size: 13px; }
+        .main-content { padding: 12px 16px 32px; }
+        .card { padding: 16px; }
+        .grid-2 { grid-template-columns: 1fr; }
+        .row { flex-direction: column; }
+        .row > .col { width: 100%; }
+        .navbar .user-info { display: none; }
+      }
+
+      @media (max-width: 480px) {
+        .navbar { gap: 8px; padding: 0 12px; }
+        .nav-actions { gap: 4px; }
+        .tab-btn { padding: 8px 10px; font-size: 12px; }
+        .main-content { padding: 8px 12px 24px; }
+        .card { padding: 12px; border-radius: var(--radius); }
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <h1>AI Podcast Builder</h1>
-      <p class="hint">
-        配置来源（RSS / arXiv / NewsAPI）→ 自动转换 RSS → LLM 总结 → TTS 生成播客 → Telegram 推送。
-      </p>
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer"></div>
 
-      <div class="actions">
-        <span class="small" id="currentUser"></span>
-        <button class="primary" id="runNowBtn">立即执行一次</button>
-        <button id="rebuildFeedsBtn">重建来源 RSS</button>
-        <button id="refreshBtn">刷新面板</button>
-        <button id="logoutBtn">退出登录</button>
+    <!-- Top Navbar -->
+    <nav class="navbar">
+      <span class="brand"><span class="brand-icon">&#x1F399;</span> AI Podcast Builder</span>
+      <span class="spacer"></span>
+      <span class="user-info" id="currentUser"></span>
+      <div class="nav-actions">
+        <button class="nav-btn primary" id="runNowBtn">&#9654; 执行</button>
+                <button class="nav-btn" id="refreshBtn">&#x21BB; 刷新</button>
+        <button class="nav-btn" id="logoutBtn">退出</button>
+      </div>
+    </nav>
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="general"><span class="tab-icon">&#x2699;</span>全局设置</button>
+      <button class="tab-btn" data-tab="api"><span class="tab-icon">&#x1F517;</span>API 服务</button>
+      <button class="tab-btn" data-tab="sources"><span class="tab-icon">&#x1F4E1;</span>来源管理</button>
+      <button class="tab-btn" data-tab="episodes"><span class="tab-icon">&#x1F3A7;</span>播客历史</button>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+
+      <!-- Tab: 全局设置 -->
+      <div class="tab-panel active" id="tab-general">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title"><span class="icon">&#x2699;</span> 通用配置</div>
+            <div class="field-group">
+              <div class="field-group-title">基础参数</div>
+              <div class="row">
+                <div class="col"><label>语言</label><select id="language"><option value="zh-CN">中文（简体）</option><option value="en-US">English (US)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="es-ES">Español</option><option value="pt-BR">Português (Brasil)</option><option value="ru-RU">Русский</option></select></div>
+                <div class="col"><label>时区</label><input id="timezone" placeholder="Asia/Shanghai" /></div>
+              </div>
+              <div class="row"><div class="col"><label>定时 Cron（默认每天8点: 0 8 * * *）</label><input id="schedule_cron" placeholder="0 8 * * *" /></div></div>
+            </div>
+            <div class="field-group">
+              <div class="field-group-title">播客风格</div>
+              <div class="row">
+                <div class="col"><label>播客名称</label><input id="podcast_name" /></div>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" id="saveGeneralBtn">&#x1F4BE; 保存全局设置</button>
+              <button id="testCronBtn">&#x23F0; 测试 Cron</button>
+              <span class="small" id="cronTestStatus" style="min-height:18px;"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><span class="icon">&#x1F512;</span> 账号安全</div>
+            <div class="field-group">
+              <div class="field-group-title">修改密码</div>
+              <div class="row"><div class="col"><label>当前密码</label><input id="current_password" type="password" autocomplete="current-password" /></div></div>
+              <div class="row"><div class="col"><label>新密码（至少8位）</label><input id="new_password" type="password" autocomplete="new-password" /></div></div>
+            </div>
+            <button id="changePasswordBtn">&#x1F511; 修改密码</button>
+          </div>
+        </div>
       </div>
 
-      <div class="grid">
-        <section class="card">
-          <h2>全局设置</h2>
-          <div class="row"><div class="col"><label>语言</label><input id="language" /></div><div class="col"><label>时区</label><input id="timezone" /></div></div>
-          <div class="row"><div class="col"><label>定时 Cron（默认每天8点: 0 8 * * *）</label><input id="schedule_cron" /></div></div>
-          <div class="row"><div class="col"><label>关键词（逗号分隔）</label><input id="topic_keywords" /></div></div>
-          <div class="row"><div class="col"><label>每源最大条目</label><input id="max_items_per_source" type="number" /></div><div class="col"><label>总条目上限</label><input id="max_total_items" type="number" /></div></div>
-          <div class="row"><div class="col"><label>播客名称</label><input id="podcast_name" /></div><div class="col"><label>主播风格</label><input id="podcast_host_style" /></div></div>
-          <button class="primary" id="saveGeneralBtn">保存全局设置</button>
-          <div style="height:1px;background:#334155;margin:14px 0;"></div>
-          <h3 style="margin:0 0 8px;font-size:16px;">账号安全</h3>
-          <div class="row"><div class="col"><label>当前密码</label><input id="current_password" type="password" autocomplete="current-password" /></div></div>
-          <div class="row"><div class="col"><label>新密码（至少8位）</label><input id="new_password" type="password" autocomplete="new-password" /></div></div>
-          <button id="changePasswordBtn">修改密码</button>
-        </section>
-
-        <section class="card">
-          <h2>LLM / TTS / Telegram</h2>
-          <div class="row"><div class="col"><label>LLM Base URL</label><input id="llm_api_base" /></div><div class="col"><label>LLM Model</label><input id="llm_model" /></div></div>
-          <div class="row"><div class="col"><label>LLM API Key</label><div class="secret-inline"><input id="llm_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="llm_api_key">显示</button></div></div><div class="col"><label>LLM Temperature</label><input id="llm_temperature" type="number" step="0.1" /></div></div>
-          <div class="row"><div class="col"><label>摘要 System Prompt</label><textarea id="llm_summary_system_prompt"></textarea></div></div>
-          <div class="row"><div class="col"><label>摘要 Prompt（支持变量 {language} {index} {total} {source} {title}）</label><textarea id="llm_summary_prompt_template"></textarea></div></div>
-          <div class="row"><div class="col"><label>播客脚本 System Prompt</label><textarea id="llm_episode_system_prompt"></textarea></div></div>
-          <div class="row"><div class="col"><label>播客脚本 Prompt（支持变量 {language} {host_style} {podcast_name} {count}）</label><textarea id="llm_episode_prompt_template"></textarea></div></div>
-          <div class="row"><div class="col"><label>提示词版本名称</label><input id="promptVersionName" placeholder="例如：严谨学术版 / 轻松播报版" /></div></div>
-          <div class="row">
-            <button id="savePromptVersionBtn">保存当前提示词版本</button>
-            <select id="promptVersionSelect" style="max-width:420px;"></select>
-            <button id="applyPromptVersionBtn">加载版本</button>
-            <button id="deletePromptVersionBtn" class="warn">删除版本</button>
+      <!-- Tab: API 服务 -->
+      <div class="tab-panel" id="tab-api">
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x1F916;</span> LLM 配置</div>
+          <div class="field-group">
+            <div class="field-group-title">连接设置</div>
+            <div class="row"><div class="col"><label>LLM Base URL</label><input id="llm_api_base" /></div><div class="col"><label>LLM Model</label><input id="llm_model" /></div></div>
+            <div class="row"><div class="col"><label>LLM API Key</label><div class="secret-inline"><input id="llm_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="llm_api_key">显示</button></div></div><div class="col"><label>LLM Temperature</label><input id="llm_temperature" type="number" step="0.1" /></div></div>
           </div>
-          <div class="small" id="promptVersionStatus" style="min-height:18px;"></div>
-
-          <div class="row"><div class="col"><label>TTS 开启</label><select id="tts_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>TTS Provider</label><select id="tts_provider"><option value="edge_tts">edge_tts（默认免费）</option><option value="custom_api">custom_api（自定义接口）</option></select></div></div>
-          <input id="tts_voice" type="hidden" />
-          <div class="row"><div class="col"><label>TTS Format</label><input id="tts_format" /></div></div>
-          <div class="row tts-custom-only"><div class="col"><label>TTS Base URL</label><input id="tts_api_base" /></div><div class="col"><label>TTS Model</label><input id="tts_model" /></div></div>
-          <div class="row tts-custom-only"><div class="col"><label>TTS Voice（custom_api）</label><input id="tts_custom_voice" placeholder="例如 default_zh" /></div><div class="col"><label>TTS Speed</label><input id="tts_audio_speed" type="number" step="0.1" /></div></div>
-          <div class="row tts-edge-only"><div class="col"><label>Edge 语言</label><select id="edge_voice_language"></select></div><div class="col"><label>Edge Voice</label><select id="edge_voice_select"></select></div><div class="col" style="max-width:180px;"><label>&nbsp;</label><button type="button" id="refreshEdgeVoicesBtn">刷新 Edge 音色</button></div></div>
-          <div class="row tts-edge-only"><div class="col"><label>TTS Speed</label><input id="tts_audio_speed_edge" type="number" step="0.1" /></div></div>
-          <div class="row tts-edge-only"><div class="col"><label>Edge Proxy（可选）</label><input id="tts_edge_proxy" placeholder="例如：http://127.0.0.1:7890" /></div><div class="col"><label>Edge 超时（连接/接收 秒）</label><div class="row" style="margin-bottom:0;"><input id="tts_edge_connect_timeout" type="number" /><input id="tts_edge_receive_timeout" type="number" /></div></div></div>
-          <div class="row tts-custom-only"><div class="col"><label>TTS API Key</label><div class="secret-inline"><input id="tts_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="tts_api_key">显示</button></div></div></div>
-
-          <div class="row"><div class="col"><label>Telegram 开启</label><select id="telegram_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>发送音频</label><select id="telegram_send_audio"><option value="true">true</option><option value="false">false</option></select></div></div>
-          <div class="row"><div class="col"><label>Bot Token</label><div class="secret-inline"><input id="telegram_bot_token" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="telegram_bot_token">显示</button></div></div><div class="col"><label>Chat ID</label><input id="telegram_chat_id" /></div></div>
-
-          <div class="row"><div class="col"><label>NewsAPI 全局 Key（可选）</label><div class="secret-inline"><input id="newsapi_global_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="newsapi_global_key">显示</button></div></div></div>
-          <div class="row"><div class="col"><label>RSSHub Base URL（容器内默认 http://rsshub:1200）</label><input id="rsshub_base_url" /></div></div>
-
-          <div class="row">
-            <button class="primary" id="saveApiBtn">保存 API 设置</button>
-            <button id="testLlmBtn">测试 LLM</button>
+          <div class="field-group">
+            <div class="field-group-title">提示词配置</div>
+            <div class="row"><div class="col"><label>摘要 System Prompt</label><textarea id="llm_summary_system_prompt"></textarea></div></div>
+            <div class="row"><div class="col"><label>摘要 Prompt（支持变量 {language} {index} {total} {source} {title}）</label><textarea id="llm_summary_prompt_template"></textarea></div></div>
+            <div class="row"><div class="col"><label>播客脚本 System Prompt</label><textarea id="llm_episode_system_prompt"></textarea></div></div>
+            <div class="row"><div class="col"><label>播客脚本 Prompt（支持变量 {language} {podcast_name} {count}）</label><textarea id="llm_episode_prompt_template"></textarea></div></div>
+          </div>
+          <div class="field-group">
+            <div class="field-group-title">提示词版本管理</div>
+            <div class="row"><div class="col"><label>版本名称</label><input id="promptVersionName" placeholder="例如：严谨学术版 / 轻松播报版" /></div></div>
+            <div class="row">
+              <button id="savePromptVersionBtn">&#x1F4BE; 保存版本</button>
+              <select id="promptVersionSelect" style="max-width:420px;"></select>
+              <button id="applyPromptVersionBtn">&#x1F4E5; 加载版本</button>
+              <button id="deletePromptVersionBtn" class="warn">&#x1F5D1; 删除版本</button>
+            </div>
+            <div class="small" id="promptVersionStatus" style="min-height:18px;"></div>
+          </div>
+          <div class="actions">
+            <button id="testLlmBtn">&#x1F9EA; 测试 LLM</button>
             <span class="small" id="llmTestStatus"></span>
           </div>
-          <div class="row">
-            <button id="testTtsBtn">测试 TTS</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x1F50A;</span> TTS 配置</div>
+          <div class="field-group">
+            <div class="field-group-title">基本设置</div>
+            <div class="row"><div class="col"><label>TTS 开启</label><select id="tts_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>TTS Provider</label><select id="tts_provider"><option value="edge_tts">edge_tts（默认免费）</option><option value="custom_api">custom_api（自定义接口）</option></select></div></div>
+            <input id="tts_voice" type="hidden" />
+            <div class="row"><div class="col"><label>TTS Format</label><input id="tts_format" /></div></div>
+          </div>
+          <div class="field-group tts-custom-only">
+            <div class="field-group-title">Custom API 设置</div>
+            <div class="row"><div class="col"><label>TTS Base URL</label><input id="tts_api_base" /></div><div class="col"><label>TTS Model</label><input id="tts_model" /></div></div>
+            <div class="row"><div class="col"><label>TTS Voice（custom_api）</label><input id="tts_custom_voice" placeholder="例如 default_zh" /></div><div class="col"><label>TTS Speed</label><input id="tts_audio_speed" type="number" step="0.1" /></div></div>
+            <div class="row"><div class="col"><label>TTS API Key</label><div class="secret-inline"><input id="tts_api_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="tts_api_key">显示</button></div></div></div>
+          </div>
+          <div class="field-group tts-edge-only">
+            <div class="field-group-title">Edge TTS 设置</div>
+            <div class="row"><div class="col"><label>Edge 语言</label><select id="edge_voice_language"></select></div><div class="col"><label>Edge Voice</label><select id="edge_voice_select"></select></div><div class="col" style="max-width:180px;"><label>&nbsp;</label><button type="button" id="refreshEdgeVoicesBtn">&#x1F504; 刷新音色</button></div></div>
+            <div class="row"><div class="col"><label>TTS Speed</label><input id="tts_audio_speed_edge" type="number" step="0.1" /></div></div>
+                        <div class="actions"><button id="previewEdgeVoiceBtn">&#x1F50A; 试听当前音色</button><span class="small" id="edgeVoicePreviewStatus"></span></div>
+                        <div class="row"><div class="col"><label>Edge 超时（连接/接收 秒）</label><div class="row" style="margin-bottom:0;"><input id="tts_edge_connect_timeout" type="number" /><input id="tts_edge_receive_timeout" type="number" /></div></div></div>
+            <div class="actions"><button id="checkEdgeTtsUpdateBtn">&#x1F50D; 检查 edge-tts 更新</button><span class="small" id="edgeTtsUpdateStatus"></span></div>
+          </div>
+          <div class="actions">
+            <button id="testTtsBtn">&#x1F9EA; 测试 TTS</button>
             <span class="small" id="ttsTestStatus"></span>
           </div>
-          <p class="hint">默认建议使用 <code>edge_tts</code>（无需 API Key）；如需第三方 TTS 接口，切换为 <code>custom_api</code>，系统会在后端自动选择兼容调用方式。若 edge-tts 报 403，可配置 Edge Proxy 再测试。</p>
-        </section>
+          <p class="hint">默认建议使用 <code>edge_tts</code>（无需 API Key）；如需第三方 TTS 接口，切换为 <code>custom_api</code>。</p>
+        </div>
 
-        <section class="card full">
-          <h2>来源管理</h2>
-          <div class="row">
-            <button id="importPresetsBtn">导入推荐来源</button>
-            <label class="small" style="display:flex;align-items:center;gap:6px;">
-              <input id="overwritePresets" type="checkbox" style="width:auto;" /> 覆盖同名同类型配置
-            </label>
-            <a target="_blank" href="/rss/aggregated.xml">查看聚合 RSS</a>
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x1F4E8;</span> Telegram / 外部服务</div>
+          <div class="field-group">
+            <div class="field-group-title">Telegram</div>
+            <div class="row"><div class="col"><label>Telegram 开启</label><select id="telegram_enabled"><option value="true">true</option><option value="false">false</option></select></div><div class="col"><label>发送音频</label><select id="telegram_send_audio"><option value="true">true</option><option value="false">false</option></select></div></div>
+            <div class="row"><div class="col"><label>Bot Token</label><div class="secret-inline"><input id="telegram_bot_token" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="telegram_bot_token">显示</button></div></div><div class="col"><label>Chat ID</label><input id="telegram_chat_id" /></div></div>
           </div>
-          <div id="presetsList" class="small" style="margin-bottom:10px;"></div>
+          <div class="field-group">
+            <div class="field-group-title">NewsAPI</div>
+            <div class="row"><div class="col"><label>NewsAPI 全局 Key（可选）</label><div class="secret-inline"><input id="newsapi_global_key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-target="newsapi_global_key">显示</button></div></div></div>
+          </div>
+        </div>
 
-          <div class="row">
-            <div class="col"><label>RSS 名称（可选）</label><input id="new_rss_name" placeholder="例如 Hacker News" /></div>
-            <div class="col"><label>RSS URL</label><input id="new_rss_url" placeholder="https://example.com/rss.xml" /></div>
-            <div class="col"><label>启用</label><select id="new_rss_enabled"><option value="true">true</option><option value="false">false</option></select></div>
-          </div>
-          <div class="row"><button class="primary" id="addRssBtn">添加 RSS 来源</button></div>
-
-          <div style="height:1px;background:#334155;margin:12px 0;"></div>
-          <div class="row">
-            <div class="col"><label>RSSHub 模板</label><select id="rsshubTemplateSelect"></select></div>
-            <div class="col" style="align-self:flex-end;"><button id="applyRssHubTemplateBtn">套用模板</button></div>
-          </div>
-          <div class="row">
-            <div class="col"><label>RSSHub 名称（可选）</label><input id="new_rsshub_name" placeholder="例如 GitHub Releases" /></div>
-            <div class="col"><label>RSSHub 路由</label><input id="new_rsshub_route" placeholder="/github/repo/DIYgod/RSSHub/releases" /></div>
-            <div class="col"><label>启用</label><select id="new_rsshub_enabled"><option value="true">true</option><option value="false">false</option></select></div>
-          </div>
-          <div class="row">
-            <button id="addRssHubBtn">通过 RSSHub 添加</button>
-            <a target="_blank" href="https://docs.rsshub.app/">RSSHub 路由文档</a>
-          </div>
-          <p class="hint">
-            现在支持直接输入 RSS URL 添加来源；没有 RSS 的网站可通过 RSSHub 路由生成 RSS 后一键接入。
-          </p>
-          <div id="sourcesList" class="list"></div>
-        </section>
-
-        <section class="card full">
-          <h2>Episodes</h2>
-          <div id="episodesList" class="list"></div>
-        </section>
+        <button class="primary" id="saveApiBtn" style="width:100%;">&#x1F4BE; 保存全部 API 设置</button>
       </div>
+
+      <!-- Tab: 来源管理 -->
+      <div class="tab-panel" id="tab-sources">
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x2795;</span> 添加 RSS 来源</div>
+          <div class="row">
+            <div class="col"><label>来源名称（可选，留空自动命名）</label><input id="new_source_name" placeholder="例如 Hacker News / TechCrunch" /></div>
+            <div class="col" style="max-width:120px;"><label>启用</label><select id="new_source_enabled"><option value="true">true</option><option value="false">false</option></select></div>
+          </div>
+          <div class="row"><div class="col"><label>RSS / Atom Feed URL</label><input id="new_rss_url" placeholder="https://example.com/feed.xml" /></div></div>
+          <div class="row">
+            <div class="col"><label>关键词筛选（逗号分隔，留空不筛选）</label><input id="new_rss_keywords" placeholder="LLM, AI, large language model" /></div>
+            <div class="col" style="max-width:160px;"><label>最大条目数</label><input id="new_rss_max_items" type="number" value="20" min="1" max="200" /></div>
+          </div>
+          <p class="hint">关键词匹配标题/摘要/正文/标签，多个关键词为 OR 关系。每个来源独立配置。</p>
+          <div class="row" style="margin-top:8px;">
+            <button class="primary" id="addSourceBtn">&#x2795; 添加来源</button>
+            <a target="_blank" href="/rss/aggregated.xml">&#x1F4CB; 查看聚合 RSS</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span class="icon">&#x1F4CB;</span> 已配置来源 <span class="small" id="sourcesCount" style="margin-left:auto;"></span></div>
+          <div id="sourcesList" class="list"></div>
+        </div>
+      </div>
+
+      <!-- Tab: 播客历史 -->
+      <div class="tab-panel" id="tab-episodes">
+        <div class="card">
+          <div class="card-title">
+            <span class="icon">&#x1F3A7;</span> Episodes
+            <span class="small" id="episodesCount" style="margin-left:auto;"></span>
+            <button class="warn sm" id="clearEpisodesBtn">&#x1F5D1; 清空全部</button>
+          </div>
+          <div id="episodesList" class="list"></div>
+        </div>
+      </div>
+
     </div>
 
     <script src="/static/app.js"></script>

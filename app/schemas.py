@@ -141,3 +141,19 @@ class PromptVersionRead(BaseModel):
 
 class PromptVersionCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class CronTestRequest(BaseModel):
+    schedule_cron: str = Field(min_length=5, max_length=120)
+    timezone: str | None = Field(default=None, max_length=80)
+
+
+class CronTestResponse(BaseModel):
+    ok: bool
+    message: str
+    next_runs: list[str] = Field(default_factory=list)
+
+
+class EdgeVoicePreviewRequest(BaseModel):
+    voice: str = Field(min_length=3, max_length=120)
+    audio_speed: float | None = Field(default=None, ge=0.25, le=4.0)

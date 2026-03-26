@@ -1,20 +1,15 @@
 const qs = (id) => document.getElementById(id);
 
-let cachedPresets = [];
-let cachedRssHubTemplates = [];
 let cachedPromptVersions = [];
 let cachedEdgeVoiceLanguages = [];
 let episodesPollTimer = null;
+let edgePreviewObjectUrl = null;
 
 const fieldsGeneral = [
   "language",
   "timezone",
   "schedule_cron",
-  "topic_keywords",
-  "max_items_per_source",
-  "max_total_items",
   "podcast_name",
-  "podcast_host_style",
 ];
 
 const fieldsAPI = [
@@ -33,7 +28,6 @@ const fieldsAPI = [
   "tts_model",
   "tts_voice",
   "tts_audio_speed",
-  "tts_edge_proxy",
   "tts_edge_connect_timeout",
   "tts_edge_receive_timeout",
   "tts_format",
@@ -42,7 +36,6 @@ const fieldsAPI = [
   "telegram_chat_id",
   "telegram_send_audio",
   "newsapi_global_key",
-  "rsshub_base_url",
 ];
 
 const promptFields = [
@@ -57,30 +50,129 @@ const EDGE_VOICE_FALLBACK_LANGUAGES = [
     code: "zh-CN",
     name: "中文（简体）",
     voices: [
-      { name: "zh-CN-XiaoxiaoNeural", label: "zh-CN-XiaoxiaoNeural" },
-      { name: "zh-CN-YunxiNeural", label: "zh-CN-YunxiNeural" },
-      { name: "zh-CN-YunjianNeural", label: "zh-CN-YunjianNeural" },
-      { name: "zh-CN-XiaoyiNeural", label: "zh-CN-XiaoyiNeural" },
+      { name: "zh-CN-XiaoxiaoNeural", label: "Xiaoxiao (女声) · 温暖自然" },
+      { name: "zh-CN-YunxiNeural", label: "Yunxi (男声) · 沉稳" },
+      { name: "zh-CN-YunjianNeural", label: "Yunjian (男声) · 阳刚" },
+      { name: "zh-CN-XiaoyiNeural", label: "Xiaoyi (女声) · 活泼" },
     ],
   },
   {
     code: "en-US",
     name: "English (US)",
     voices: [
-      { name: "en-US-AriaNeural", label: "en-US-AriaNeural" },
-      { name: "en-US-JennyNeural", label: "en-US-JennyNeural" },
-      { name: "en-US-GuyNeural", label: "en-US-GuyNeural" },
+      { name: "en-US-AriaNeural", label: "Aria (Female) · Warm" },
+      { name: "en-US-JennyNeural", label: "Jenny (Female) · Friendly" },
+      { name: "en-US-GuyNeural", label: "Guy (Male) · Casual" },
     ],
   },
   {
     code: "ja-JP",
     name: "日本語",
     voices: [
-      { name: "ja-JP-NanamiNeural", label: "ja-JP-NanamiNeural" },
-      { name: "ja-JP-KeitaNeural", label: "ja-JP-KeitaNeural" },
+      { name: "ja-JP-NanamiNeural", label: "Nanami (女性) · 明るい" },
+      { name: "ja-JP-KeitaNeural", label: "Keita (男性) · 落ち着き" },
     ],
   },
 ];
+
+// ==================== Toast System ====================
+
+function showToast(type, message, duration = 3000) {
+  const container = qs("toastContainer");
+  if (!container) return;
+
+  const icons = { success: "\u2705", error: "\u274C", info: "\u2139\uFE0F" };
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || icons.info}</span>
+    <span class="toast-msg">${escapeHtml(message)}</span>
+    <button class="toast-close" onclick="this.parentElement.classList.add('removing');setTimeout(()=>this.parentElement.remove(),250)">\u00D7</button>
+  `;
+  container.appendChild(toast);
+
+  if (duration > 0) {
+    setTimeout(() => {
+      if (toast.parentElement) {
+        toast.classList.add("removing");
+        setTimeout(() => toast.remove(), 250);
+      }
+    }, duration);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ==================== Confirm Modal ====================
+
+function showConfirm(title, message) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-box">
+        <div class="modal-title">${escapeHtml(title)}</div>
+        <div class="modal-body">${escapeHtml(message)}</div>
+        <div class="modal-actions">
+          <button class="modal-cancel">取消</button>
+          <button class="primary modal-confirm">确认</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const cleanup = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+
+    overlay.querySelector(".modal-cancel").onclick = () => cleanup(false);
+    overlay.querySelector(".modal-confirm").onclick = () => cleanup(true);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+  });
+}
+
+// ==================== Button Loading ====================
+
+function setButtonLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) {
+    btn.disabled = true;
+    btn._origHTML = btn.innerHTML;
+    const text = btn.textContent.trim();
+    btn.innerHTML = `<span class="btn-spinner"></span> ${escapeHtml(text)}`;
+  } else {
+    btn.disabled = false;
+    if (btn._origHTML !== undefined) {
+      btn.innerHTML = btn._origHTML;
+      delete btn._origHTML;
+    }
+  }
+}
+
+// ==================== Tab System ====================
+
+function initTabs() {
+  const tabBtns = document.querySelectorAll(".tab-btn");
+  const tabPanels = document.querySelectorAll(".tab-panel");
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tabId = btn.dataset.tab;
+      tabBtns.forEach((b) => b.classList.remove("active"));
+      tabPanels.forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      const panel = qs(`tab-${tabId}`);
+      if (panel) panel.classList.add("active");
+    });
+  });
+}
+
+// ==================== Business Logic (unchanged) ====================
 
 function parseValueByField(field, raw) {
   if (["llm_api_base", "tts_api_base"].includes(field)) return normalizeBaseUrl(raw);
@@ -336,6 +428,27 @@ function setTestStatus(id, ok, message) {
   el.textContent = message;
 }
 
+function setCronTestStatus(ok, message) {
+  const el = qs("cronTestStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
+function setEdgeTtsUpdateStatus(ok, message) {
+  const el = qs("edgeTtsUpdateStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
+function setEdgeVoicePreviewStatus(ok, message) {
+  const el = qs("edgeVoicePreviewStatus");
+  if (!el) return;
+  el.className = ok ? "small ok" : "small fail";
+  el.textContent = message;
+}
+
 function setPromptVersionStatus(ok, message) {
   const el = qs("promptVersionStatus");
   if (!el) return;
@@ -446,22 +559,26 @@ function scheduleEpisodePolling(episodes) {
   if (!hasActive) return;
   episodesPollTimer = setTimeout(async () => {
     try {
-      await loadAll();
+      await loadEpisodes();
     } catch {
-      // ignore polling error, user can refresh manually
+      // ignore polling error
     }
   }, 2500);
 }
+
+// ==================== Rendering ====================
 
 function sourceItemHTML(source) {
   const config = source.config || {};
   const isRss = source.source_type === "rss";
   const lastError = source.last_error || "";
+  const keywords = config.keywords || "";
+  const maxItems = config.max_items || 20;
   return `
     <div class="item" data-id="${source.id}" data-source-type="${source.source_type}">
       <div class="row">
-        <div class="col"><strong>${source.name}</strong> <span class="small">#${source.id}</span></div>
-        <div class="col small">
+        <div class="col"><strong>${escapeHtml(source.name)}</strong> <span class="small">#${source.id}</span></div>
+        <div class="col small" style="text-align:right;">
           <span class="pill">${source.source_type}</span>
           <span class="pill ${source.enabled ? "ok" : "fail"}">${source.enabled ? "enabled" : "disabled"}</span>
         </div>
@@ -470,15 +587,19 @@ function sourceItemHTML(source) {
       <div class="small ${lastError ? "fail" : ""}">last_error=${lastError || "-"}</div>
       ${
         isRss
-          ? `<div class="row"><div class="col"><label>RSS URL</label><input class="rss-url-input" value="${config.url || ""}" /></div></div>`
-          : `<div class="row"><div class="col"><label>配置 JSON</label><textarea class="source-config">${JSON.stringify(config, null, 2)}</textarea></div></div>`
+          ? `<div class="row"><div class="col"><label>RSS URL</label><input class="rss-url-input" value="${escapeHtml(config.url || "")}" /></div></div>
+             <div class="row">
+               <div class="col"><label>关键词筛选（逗号分隔，留空不筛选）</label><input class="source-keywords-input" value="${escapeHtml(keywords)}" placeholder="留空则不筛选" /></div>
+               <div class="col" style="max-width:160px;"><label>最大条目数</label><input class="source-max-items-input" type="number" value="${maxItems}" min="1" max="200" /></div>
+             </div>`
+          : `<div class="row"><div class="col"><label>配置 JSON</label><textarea class="source-config">${escapeHtml(JSON.stringify(config, null, 2))}</textarea></div></div>`
       }
       <div class="row">
-        <button class="save-source">保存来源配置</button>
-        <button class="test-source">测试来源</button>
-        <button class="toggle-source">切换启用</button>
-        <button class="warn delete-source">删除</button>
-        <a target="_blank" href="/rss/sources/${source.id}.xml">查看转换后 RSS</a>
+        <button class="save-source sm">\u{1F4BE} 保存配置</button>
+        <button class="test-source sm">\u{1F9EA} 测试</button>
+        <button class="toggle-source sm">\u{1F504} 切换启用</button>
+        <button class="warn delete-source sm">\u{1F5D1} 删除</button>
+        <a target="_blank" href="/rss/sources/${source.id}.xml">查看 RSS</a>
       </div>
       <div class="small source-test-result" style="min-height:18px;"></div>
     </div>
@@ -488,11 +609,6 @@ function sourceItemHTML(source) {
 function episodeItemHTML(episode) {
   const payload = parseEpisodePayload(episode.payload_json);
   const progress = payload.progress || {};
-  const progressPercent = Math.max(
-    0,
-    Math.min(100, Number(progress.percent ?? (episode.status === "completed" ? 100 : 0))),
-  );
-  const progressStage = progress.stage || "-";
   const progressMessage = progress.message || "";
   const sourceResults = Array.isArray(payload.source_results) ? payload.source_results : [];
   const failedSources = sourceResults.filter((row) => !row.ok).slice(0, 3);
@@ -506,75 +622,112 @@ function episodeItemHTML(episode) {
 
   const audioLink = episode.audio_file ? `/media/audio/${episode.audio_file}` : "";
   const notesLink = episode.notes_file ? `/media/notes/${episode.notes_file}` : "";
+  const statusClass = episode.status === "completed" ? "ok" : episode.status === "failed" ? "fail" : "";
+
   return `
     <div class="item">
-      <div><strong>${episode.title || "(未命名)"}</strong> <span class="small">#${episode.id} ${episode.status}</span></div>
+      <div class="row">
+        <div class="col"><strong>${escapeHtml(episode.title || "(未命名)")}</strong></div>
+        <div class="col small" style="text-align:right;">
+          <span class="small">#${episode.id}</span>
+          <span class="pill ${statusClass}">${episode.status}</span>
+        </div>
+      </div>
       <div class="small">created=${episode.created_at} | completed=${episode.completed_at || "-"}</div>
-      <div class="small">progress=${progressPercent}% | stage=${progressStage}</div>
-      <div class="progress-track"><div class="progress-bar" style="width:${progressPercent}%;"></div></div>
-      ${progressMessage ? `<div class="small">${progressMessage}</div>` : ""}
-      ${showOverview ? `<div>${overviewText}</div>` : ""}
+      ${progressMessage ? `<div class="small">状态：${escapeHtml(progressMessage)}</div>` : ""}
+      ${showOverview ? `<div style="margin-top:6px;">${escapeHtml(overviewText)}</div>` : ""}
       <div class="small">item_count=${episode.item_count}</div>
       ${
         failedSources.length
           ? `<div class="small fail">来源失败：${failedSources
-              .map((row) => `${row.name || "未知来源"}(${row.error || "unknown"})`)
+              .map((row) => `${escapeHtml(row.name || "未知来源")}(${escapeHtml(row.error || "unknown")})`)
               .join(" | ")}</div>`
           : ""
       }
-      ${audioLink ? `<audio controls src="${audioLink}" style="margin-top:8px; width: 100%;"></audio>` : ""}
+      ${audioLink ? `<audio controls src="${audioLink}"></audio>` : ""}
       <div class="row" style="margin-top:8px;">
-        ${audioLink ? `<a target="_blank" href="${audioLink}">下载音频</a>` : `<span class="small">未生成音频</span>`}
-        ${notesLink ? `<a target="_blank" href="${notesLink}">查看材料笔记</a>` : ""}
+        ${audioLink ? `<a target="_blank" href="${audioLink}">\u{1F4E5} 下载音频</a>` : `<span class="small">未生成音频</span>`}
+        ${notesLink ? `<a target="_blank" href="${notesLink}">\u{1F4DD} 查看材料笔记</a>` : ""}
+        <button class="warn sm delete-episode" data-episode-id="${episode.id}">\u{1F5D1} 删除</button>
       </div>
-      ${showError ? `<div class="small fail">error=${errorMessage}</div>` : ""}
+      ${showError ? `<div class="small fail" style="margin-top:4px;">error=${escapeHtml(errorMessage)}</div>` : ""}
     </div>
   `;
 }
 
-function presetItemHTML(preset) {
-  return `
-    <label style="display:inline-flex;align-items:center;gap:6px;margin-right:14px;margin-bottom:6px;">
-      <input type="checkbox" class="preset-checkbox" value="${preset.preset_id}" checked />
-      <span>${preset.name} (${preset.source_type}) - ${preset.description}</span>
-    </label>
+function renderEmptyState(containerId, icon, title, desc) {
+  const el = qs(containerId);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">${icon}</div>
+      <div class="empty-title">${escapeHtml(title)}</div>
+      <div class="empty-desc">${escapeHtml(desc)}</div>
+    </div>
   `;
 }
 
-function renderRssHubTemplateOptions(templates) {
-  const select = qs("rsshubTemplateSelect");
-  if (!select) return;
-  const options = [
-    `<option value="">选择 RSSHub 模板（可选）</option>`,
-    ...templates.map(
-      (item) => `<option value="${item.route}">${item.title} - ${item.route}</option>`,
-    ),
-  ];
-  select.innerHTML = options.join("");
+// ==================== Partial Data Loading ====================
+
+function renderSources(sources) {
+  const countEl = qs("sourcesCount");
+  if (countEl) countEl.textContent = `${sources.length} 个来源`;
+
+  if (sources.length) {
+    qs("sourcesList").innerHTML = sources.map(sourceItemHTML).join("");
+  } else {
+    renderEmptyState("sourcesList", "\u{1F4E1}", "暂无来源", "通过上方表单添加 RSS、arXiv 或 RSSHub 来源");
+  }
 }
 
-async function loadAll() {
-  const me = await request("/api/auth/me");
-  qs("currentUser").textContent = `当前用户：${me.username}`;
+function renderEpisodes(episodes) {
+  const countEl = qs("episodesCount");
+  if (countEl) countEl.textContent = `${episodes.length} 条记录`;
 
-  const settings = await request("/api/settings");
-  fillSettings(settings.values || {});
-  await loadEdgeVoices();
-
-  cachedPresets = await request("/api/source-presets");
-  qs("presetsList").innerHTML = cachedPresets.map(presetItemHTML).join("");
-
-  await loadPromptVersions();
-
-  cachedRssHubTemplates = await request("/api/rsshub/templates");
-  renderRssHubTemplateOptions(cachedRssHubTemplates);
-
-  const sources = await request("/api/sources");
-  qs("sourcesList").innerHTML = sources.map(sourceItemHTML).join("");
-
-  const episodes = await request("/api/episodes");
-  qs("episodesList").innerHTML = episodes.map(episodeItemHTML).join("");
+  if (episodes.length) {
+    qs("episodesList").innerHTML = episodes.map(episodeItemHTML).join("");
+  } else {
+    renderEmptyState("episodesList", "\u{1F3A7}", "暂无播客", "配置来源后点击「执行」生成第一期播客");
+  }
   scheduleEpisodePolling(episodes);
+}
+
+async function loadSources() {
+  const sources = await request("/api/sources");
+  renderSources(sources);
+  return sources;
+}
+
+async function loadEpisodes() {
+  const episodes = await request("/api/episodes");
+  renderEpisodes(episodes);
+  return episodes;
+}
+
+// ==================== Main Data Loading (parallelized) ====================
+
+async function loadAll() {
+  // Phase 1: Fire all independent requests in parallel
+  const [me, settingsRes, versions, sources, episodes] = await Promise.all([
+    request("/api/auth/me"),
+    request("/api/settings"),
+    request("/api/prompt-versions").catch(() => []),
+    request("/api/sources").catch(() => []),
+    request("/api/episodes").catch(() => []),
+  ]);
+
+  // Phase 2: Apply results (DOM updates are synchronous and fast)
+  qs("currentUser").textContent = `\u{1F464} ${me.username}`;
+  fillSettings(settingsRes.values || {});
+
+  cachedPromptVersions = versions;
+  renderPromptVersionOptions(cachedPromptVersions);
+
+  renderSources(sources);
+  renderEpisodes(episodes);
+
+  // Phase 3: Edge voices (depends on settings being filled first, non-blocking)
+  loadEdgeVoices().catch(() => {});
 }
 
 async function saveSettings(fieldList) {
@@ -591,57 +744,40 @@ async function saveSettings(fieldList) {
   });
 }
 
-async function addRssSource() {
-  const name = qs("new_rss_name").value.trim();
-  const url = qs("new_rss_url").value.trim();
-  const enabled = qs("new_rss_enabled").value === "true";
+// ==================== Source Addition ====================
 
+async function addSource() {
+  const name = (qs("new_source_name")?.value || "").trim();
+  const enabled = qs("new_source_enabled")?.value === "true";
+
+  const url = (qs("new_rss_url")?.value || "").trim();
   if (!url) {
-    alert("请填写 RSS URL");
+    showToast("error", "请填写 RSS URL");
     return;
   }
 
-  await request("/api/sources/rss", {
+  const keywords = (qs("new_rss_keywords")?.value || "").trim();
+  const maxItems = parseInt(qs("new_rss_max_items")?.value) || 20;
+
+  const config = { url };
+  if (keywords) config.keywords = keywords;
+  if (maxItems !== 20) config.max_items = maxItems;
+
+  await request("/api/sources", {
     method: "POST",
-    body: JSON.stringify({ name: name || null, url, enabled }),
+    body: JSON.stringify({
+      name: name || url.replace(/^https?:\/\//, "").split("/")[0],
+      source_type: "rss",
+      enabled,
+      config,
+    }),
   });
 
-  qs("new_rss_name").value = "";
+  qs("new_source_name").value = "";
   qs("new_rss_url").value = "";
-  await loadAll();
-}
-
-async function addRssHubSource() {
-  await saveSettings(["rsshub_base_url"]);
-
-  const name = qs("new_rsshub_name").value.trim();
-  const route = qs("new_rsshub_route").value.trim() || (qs("rsshubTemplateSelect")?.value || "").trim();
-  const enabled = qs("new_rsshub_enabled").value === "true";
-
-  if (!route) {
-    alert("请填写 RSSHub 路由");
-    return;
-  }
-
-  await request("/api/sources/rsshub", {
-    method: "POST",
-    body: JSON.stringify({ name: name || null, route, enabled }),
-  });
-
-  qs("new_rsshub_name").value = "";
-  qs("new_rsshub_route").value = "";
-  await loadAll();
-}
-
-function applySelectedRssHubTemplate() {
-  const selectedRoute = (qs("rsshubTemplateSelect")?.value || "").trim();
-  if (!selectedRoute) return;
-  qs("new_rsshub_route").value = selectedRoute;
-
-  const selected = cachedRssHubTemplates.find((item) => item.route === selectedRoute);
-  if (selected && !qs("new_rsshub_name").value.trim()) {
-    qs("new_rsshub_name").value = selected.title;
-  }
+  qs("new_rss_keywords").value = "";
+  qs("new_rss_max_items").value = "20";
+  await loadSources();
 }
 
 async function handleSourceListClick(event) {
@@ -651,9 +787,10 @@ async function handleSourceListClick(event) {
   if (!id) return;
 
   if (event.target.classList.contains("delete-source")) {
-    if (!confirm(`确认删除来源 #${id}？`)) return;
+    const confirmed = await showConfirm("删除来源", `确认删除来源 #${id}？此操作不可撤销。`);
+    if (!confirmed) return;
     await request(`/api/sources/${id}`, { method: "DELETE" });
-    await loadAll();
+    await loadSources();
     return;
   }
 
@@ -665,7 +802,7 @@ async function handleSourceListClick(event) {
       method: "PUT",
       body: JSON.stringify({ enabled: !source.enabled }),
     });
-    await loadAll();
+    await loadSources();
     return;
   }
 
@@ -680,7 +817,6 @@ async function handleSourceListClick(event) {
       resultEl.className = `small source-test-result ${result.ok ? "ok" : "fail"}`;
       resultEl.textContent = result.message || "完成";
     }
-    await loadAll();
     return;
   }
 
@@ -696,16 +832,20 @@ async function handleSourceListClick(event) {
       const input = item.querySelector(".rss-url-input");
       const rssUrl = (input?.value || "").trim();
       if (!rssUrl) {
-        alert("RSS URL 不能为空");
+        showToast("error", "RSS URL 不能为空");
         return;
       }
+      const keywords = (item.querySelector(".source-keywords-input")?.value || "").trim();
+      const maxItems = parseInt(item.querySelector(".source-max-items-input")?.value) || 20;
       config = { ...config, url: rssUrl };
+      config.keywords = keywords || "";
+      config.max_items = maxItems;
     } else {
       const textarea = item.querySelector(".source-config");
       try {
         config = JSON.parse(textarea.value || "{}");
       } catch (e) {
-        alert(`配置 JSON 无效: ${e.message}`);
+        showToast("error", `配置 JSON 无效: ${e.message}`);
         return;
       }
     }
@@ -714,7 +854,8 @@ async function handleSourceListClick(event) {
       method: "PUT",
       body: JSON.stringify({ config }),
     });
-    await loadAll();
+    showToast("success", "来源配置已保存");
+    await loadSources();
   }
 }
 
@@ -732,22 +873,122 @@ async function testTts() {
   setTestStatus("ttsTestStatus", Boolean(res.ok), res.message || "无返回");
 }
 
+async function testCron() {
+  const scheduleCron = (qs("schedule_cron")?.value || "").trim();
+  const timezone = (qs("timezone")?.value || "").trim();
+  if (!scheduleCron) {
+    setCronTestStatus(false, "请先填写 Cron 表达式");
+    return;
+  }
+
+  setCronTestStatus(true, "测试中...");
+  const res = await request("/api/test/cron", {
+    method: "POST",
+    body: JSON.stringify({ schedule_cron: scheduleCron, timezone }),
+  });
+  const nextRuns = Array.isArray(res.next_runs) ? res.next_runs : [];
+  const suffix = nextRuns.length ? ` | 下次触发: ${nextRuns[0]}` : "";
+  setCronTestStatus(Boolean(res.ok), (res.message || "无返回") + suffix);
+}
+
+async function checkEdgeTtsUpdate(notifyOnLatest = false) {
+  setEdgeTtsUpdateStatus(true, "检查中...");
+  const res = await request("/api/tts/edge-version");
+
+  const installed = res.installed_version || "unknown";
+  const latest = res.latest_version || "unknown";
+  const updateAvailable = Boolean(res.update_available);
+
+  if (updateAvailable) {
+    setEdgeTtsUpdateStatus(false, `发现新版本：${installed} → ${latest}，建议重建 Docker 镜像更新`);
+    showToast("info", `edge-tts 有新版本 ${latest}，建议更新 Docker 应用`);
+    return;
+  }
+
+  const msg = `edge-tts 当前版本：${installed}${latest !== "unknown" ? `（latest: ${latest}）` : ""}`;
+  setEdgeTtsUpdateStatus(true, msg);
+  if (notifyOnLatest) {
+    showToast("success", msg);
+  }
+}
+
+async function previewEdgeVoice() {
+  const voice = (qs("edge_voice_select")?.value || "").trim();
+  if (!voice) {
+    setEdgeVoicePreviewStatus(false, "请先选择 Edge Voice");
+    return;
+  }
+
+  const speedRaw = (qs("tts_audio_speed_edge")?.value || "").trim();
+  const speed = speedRaw ? Number(speedRaw) : null;
+
+  setEdgeVoicePreviewStatus(true, `正在生成试听音频：我是${voice}`);
+  const resp = await fetch("/api/test/edge-voice", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      voice,
+      audio_speed: Number.isFinite(speed) ? speed : null,
+    }),
+  });
+
+  if (!resp.ok) {
+    const raw = await resp.text();
+    throw new Error(`${resp.status} ${raw}`);
+  }
+
+  const blob = await resp.blob();
+  if (!blob || !blob.size) {
+    throw new Error("未获取到试听音频数据");
+  }
+
+  if (edgePreviewObjectUrl) {
+    URL.revokeObjectURL(edgePreviewObjectUrl);
+    edgePreviewObjectUrl = null;
+  }
+
+  edgePreviewObjectUrl = URL.createObjectURL(blob);
+  const previewAudio = new Audio(edgePreviewObjectUrl);
+  try {
+    await previewAudio.play();
+    setEdgeVoicePreviewStatus(true, `试听成功：${voice}`);
+  } catch {
+    setEdgeVoicePreviewStatus(true, `试听音频已生成，请允许浏览器播放后重试：${voice}`);
+  }
+}
+
+// ==================== Init ====================
+
 async function init() {
+  initTabs();
+
   qs("refreshBtn").onclick = async () => {
+    const btn = qs("refreshBtn");
+    setButtonLoading(btn, true);
     try {
       await loadAll();
+      showToast("success", "面板已刷新");
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("runNowBtn").onclick = async () => {
+    const btn = qs("runNowBtn");
+    setButtonLoading(btn, true);
     try {
       const res = await request("/api/run-now", { method: "POST" });
-      alert(res.message || "任务已触发");
-      await loadAll();
+      showToast("success", res.message || "任务已触发");
+      // Switch to episodes tab immediately, don't block
+      document.querySelector('.tab-btn[data-tab="episodes"]')?.click();
+      // Non-blocking refresh of episodes only
+      loadEpisodes().catch(() => {});
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
@@ -759,47 +1000,89 @@ async function init() {
     }
   };
 
-  qs("rebuildFeedsBtn").onclick = async () => {
+  qs("saveGeneralBtn").onclick = async () => {
+    const btn = qs("saveGeneralBtn");
+    setButtonLoading(btn, true);
     try {
-      const res = await request("/api/rebuild-feeds", { method: "POST" });
-      alert(`重建完成，来源数: ${res.sources}`);
-      await loadAll();
+      await saveSettings(fieldsGeneral);
+      showToast("success", "全局设置已保存");
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
-  qs("saveGeneralBtn").onclick = async () => {
+  qs("testCronBtn").onclick = async () => {
+    const btn = qs("testCronBtn");
+    setButtonLoading(btn, true);
     try {
-      await saveSettings(fieldsGeneral);
-      alert("全局设置已保存");
+      await testCron();
     } catch (e) {
-      alert(e.message);
+      setCronTestStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("checkEdgeTtsUpdateBtn").onclick = async () => {
+    const btn = qs("checkEdgeTtsUpdateBtn");
+    setButtonLoading(btn, true);
+    try {
+      await checkEdgeTtsUpdate(true);
+    } catch (e) {
+      setEdgeTtsUpdateStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("previewEdgeVoiceBtn").onclick = async () => {
+    const btn = qs("previewEdgeVoiceBtn");
+    setButtonLoading(btn, true);
+    try {
+      await previewEdgeVoice();
+    } catch (e) {
+      setEdgeVoicePreviewStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("saveApiBtn").onclick = async () => {
+    const btn = qs("saveApiBtn");
+    setButtonLoading(btn, true);
     try {
       await saveSettings(fieldsAPI);
-      alert("API 设置已保存");
+      showToast("success", "API 设置已保存");
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("testLlmBtn").onclick = async () => {
+    const btn = qs("testLlmBtn");
+    setButtonLoading(btn, true);
     try {
       await testLlm();
     } catch (e) {
       setTestStatus("llmTestStatus", false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("testTtsBtn").onclick = async () => {
+    const btn = qs("testTtsBtn");
+    setButtonLoading(btn, true);
     try {
       await testTts();
     } catch (e) {
       setTestStatus("ttsTestStatus", false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
@@ -841,45 +1124,62 @@ async function init() {
   const refreshEdgeVoicesBtn = qs("refreshEdgeVoicesBtn");
   if (refreshEdgeVoicesBtn) {
     refreshEdgeVoicesBtn.onclick = async () => {
+      setButtonLoading(refreshEdgeVoicesBtn, true);
       try {
         await loadEdgeVoices(true);
         setTestStatus("ttsTestStatus", true, "Edge 音色已刷新");
       } catch (e) {
         setTestStatus("ttsTestStatus", false, e.message);
+      } finally {
+        setButtonLoading(refreshEdgeVoicesBtn, false);
       }
     };
   }
 
   qs("savePromptVersionBtn").onclick = async () => {
+    const btn = qs("savePromptVersionBtn");
+    setButtonLoading(btn, true);
     try {
       await savePromptVersion();
     } catch (e) {
       setPromptVersionStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("applyPromptVersionBtn").onclick = async () => {
+    const btn = qs("applyPromptVersionBtn");
+    setButtonLoading(btn, true);
     try {
       await applyPromptVersion();
     } catch (e) {
       setPromptVersionStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("deletePromptVersionBtn").onclick = async () => {
+    const btn = qs("deletePromptVersionBtn");
+    setButtonLoading(btn, true);
     try {
       await deletePromptVersion();
     } catch (e) {
       setPromptVersionStatus(false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
   qs("changePasswordBtn").onclick = async () => {
+    const btn = qs("changePasswordBtn");
+    setButtonLoading(btn, true);
     try {
       const current_password = qs("current_password").value;
       const new_password = qs("new_password").value;
       if (!current_password || !new_password) {
-        alert("请填写当前密码和新密码");
+        showToast("error", "请填写当前密码和新密码");
         return;
       }
       await request("/api/auth/change-password", {
@@ -888,54 +1188,25 @@ async function init() {
       });
       qs("current_password").value = "";
       qs("new_password").value = "";
-      alert("密码修改成功");
+      showToast("success", "密码修改成功");
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
-  qs("addRssBtn").onclick = async () => {
+  // Unified add source button
+  qs("addSourceBtn").onclick = async () => {
+    const btn = qs("addSourceBtn");
+    setButtonLoading(btn, true);
     try {
-      await addRssSource();
-      alert("RSS 来源已新增");
+      await addSource();
+      showToast("success", "来源已新增");
     } catch (e) {
-      alert(e.message);
-    }
-  };
-
-  qs("addRssHubBtn").onclick = async () => {
-    try {
-      await addRssHubSource();
-      alert("RSSHub 来源已新增");
-    } catch (e) {
-      alert(e.message);
-    }
-  };
-
-  qs("applyRssHubTemplateBtn").onclick = () => {
-    applySelectedRssHubTemplate();
-  };
-
-  qs("rsshubTemplateSelect").onchange = () => {
-    applySelectedRssHubTemplate();
-  };
-
-  qs("importPresetsBtn").onclick = async () => {
-    try {
-      const checked = Array.from(document.querySelectorAll(".preset-checkbox:checked")).map((node) => node.value);
-      const overwrite_existing = qs("overwritePresets").checked;
-      const payload = {
-        preset_ids: checked.length ? checked : cachedPresets.map((item) => item.preset_id),
-        overwrite_existing,
-      };
-      const res = await request("/api/sources/import-defaults", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      alert(`导入完成: selected=${res.selected}, created=${res.created}, updated=${res.updated}, skipped=${res.skipped}`);
-      await loadAll();
-    } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
     }
   };
 
@@ -943,16 +1214,55 @@ async function init() {
     try {
       await handleSourceListClick(event);
     } catch (e) {
-      alert(e.message);
+      showToast("error", e.message);
     }
   });
+
+  qs("episodesList").addEventListener("click", async (event) => {
+    const btn = event.target.closest(".delete-episode");
+    if (!btn) return;
+
+    const episodeId = Number(btn.dataset.episodeId || "0");
+    if (!episodeId) return;
+
+    if (!confirm(`确认删除播客 #${episodeId}？`)) return;
+
+    setButtonLoading(btn, true);
+    try {
+      await request(`/api/episodes/${episodeId}`, { method: "DELETE" });
+      showToast("success", `已删除播客 #${episodeId}`);
+      await loadEpisodes();
+    } catch (e) {
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  });
+
+  qs("clearEpisodesBtn").onclick = async () => {
+    const btn = qs("clearEpisodesBtn");
+    if (!confirm("确认清空全部播客历史？该操作会删除数据库记录与对应音频/笔记文件。")) return;
+
+    setButtonLoading(btn, true);
+    try {
+      const res = await request("/api/episodes", { method: "DELETE" });
+      showToast("success", `清空完成，已删除 ${res.deleted ?? 0} 条记录`);
+      await loadEpisodes();
+    } catch (e) {
+      showToast("error", e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
 
   try {
     await loadAll();
     setTestStatus("llmTestStatus", true, "未测试");
     setTestStatus("ttsTestStatus", true, "未测试");
+    setEdgeVoicePreviewStatus(true, "可试听当前选择音色");
+    checkEdgeTtsUpdate(false).catch((e) => setEdgeTtsUpdateStatus(false, e.message));
   } catch (e) {
-    alert(e.message);
+    showToast("error", e.message);
   }
 }
 

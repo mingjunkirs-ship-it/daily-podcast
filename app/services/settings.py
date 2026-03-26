@@ -23,17 +23,39 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "llm_api_key": "",
     "llm_model": "gpt-4o-mini",
     "llm_temperature": 0.2,
-    "llm_summary_system_prompt": "你是专业 AI 播客编辑，擅长信息压缩与事实表达。",
+    "llm_summary_system_prompt": "你是专业的 AI 资讯编辑，擅长从技术文章中提炼核心信息。你的受众是忙碌的 AI 从业者，输出内容将用于后续播客脚本生成，需要信息密度高、事实准确、逻辑清晰。",
     "llm_summary_prompt_template": (
-        "请用 {language} 输出该条目的结构化摘要，长度控制在 130-220 字。"
-        "输出严格 JSON 对象，字段必须为 summary, impact。"
-        "impact 要解释该信息对 AI/LLM 研发或产业的意义。"
+        """请用 {language} 对以下内容进行结构化摘要。
+
+来源：{source}（第 {index}/{total} 条）
+标题：{title}
+
+要求：
+- 输出严格 JSON 对象，字段为 summary、impact、key_facts
+- summary：核心事件或观点，130–200 字，去除冗余修饰
+- impact：该信息对 AI/LLM 研发或产业的实质影响，重点说明"谁会受影响、怎么受影响"
+- key_facts：数组，提取 2–4 条可直接引用的关键数据或结论（数字、名称、时间等）
+- 禁止输出 JSON 以外的任何内容"""
     ),
-    "llm_episode_system_prompt": "你是 AI 资讯播客总编，能够组织逻辑清晰、节奏紧凑的音频节目。",
+    "llm_episode_system_prompt": (
+        """你是一档 AI 科技日报播客的主编，节目面向通勤中的 AI 从业者，每期时长 5–8 分钟。
+你的核心职责：将多条 AI 资讯整合为一期逻辑连贯、节奏流畅的音频节目。
+输出的脚本必须满足：① 可直接交给 TTS 引擎朗读，② 无 Markdown/符号/表情，③ 段落间有自然的口语过渡。"""
+    ),
     "llm_episode_prompt_template": (
-        "请用 {language} 生成播客脚本，主持风格为：{host_style}。"
-        "输出严格 JSON 对象，字段 title, overview, script。"
-        "script 是可以直接用于 TTS 的完整播报稿，长度 1200-2400 汉字。"
+        """请用 {language} 为播客「{podcast_name}」生成本期脚本，共 {count} 条资讯，主持风格：{host_style}。
+
+输出严格 JSON 对象，字段如下：
+- title：本期标题，15 字以内，吸引通勤听众
+- overview：开场白，60–80 字，概括本期亮点，语气自然口语化
+- script：正文脚本，1200–2400 字，要求如下：
+  （1）按资讯重要性排序，开头放最重磅的一条
+  （2）每条资讯之间用口语化过渡句衔接，如"说完这个，再来看一条关于……的消息"
+  （3）重要数字或术语后加简短解释，方便听众"只听不看"也能理解
+  （4）结尾有 30–50 字的收尾语，可预告下期或鼓励听众
+  （5）全文无任何 Markdown 符号、括号注释、列表符号，纯口语化书面语
+- duration_estimate：预估朗读时长（分钟，按每分钟 200 字计算）
+- 禁止输出 JSON 以外的任何内容"""
     ),
     "prompt_versions": [],
     "tts_enabled": True,
