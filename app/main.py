@@ -882,6 +882,17 @@ async def api_test_tts_connection(request: Request, db: Session = Depends(get_db
     return ConnectionTestResponse(ok=ok, message=message)
 
 
+@app.post("/api/test/telegram", response_model=ConnectionTestResponse)
+async def api_test_telegram_connection(request: Request, db: Session = Depends(get_db)) -> ConnectionTestResponse:
+    from app.services.telegram_client import TelegramClient
+
+    username = _require_username(request)
+    settings = get_settings(db, username=username)
+    client = TelegramClient(settings)
+    ok, message = await client.test_connection()
+    return ConnectionTestResponse(ok=ok, message=message)
+
+
 @app.post("/api/test/edge-voice")
 async def api_test_edge_voice(payload: EdgeVoicePreviewRequest, request: Request, db: Session = Depends(get_db)) -> Response:
     voice = str(payload.voice or "").strip()

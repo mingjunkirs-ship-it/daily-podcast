@@ -16,6 +16,41 @@ class TelegramClient:
     def available(self) -> bool:
         return self.enabled and bool(self.token and self.chat_id)
 
+    async def test_connection(self) -> tuple[bool, str]:
+        if not self.enabled:
+            return False, "Telegram 未启用"
+        if not self.token:
+            return False, "Telegram Bot Token 未配置"
+        if not self.chat_id:
+            return False, "Telegram Chat ID 未配置"
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                me_resp = await client.get(f"{self.base_url}/getMe")
+                if me_resp.status_code >= 300:
+                    return False, f"getMe 失败：HTTP {me_resp.status_code}"
+                me_payload = me_resp.json()
+                if not me_payload.get("ok"):
+                    desc = str(me_payload.get("description") or "unknown error")
+                    return False, f"Bot Token 无效：{desc}"
+
+                chat_resp = await client.get(
+                    f"{self.base_url}/getChat",
+                    params={"chat_id": self.chat_id},
+                )
+                if chat_resp.status_code >= 300:
+                    return False, f"getChat 失败：HTTP {chat_resp.status_code}"
+                chat_payload = chat_resp.json()
+                if not chat_payload.get("ok"):
+                    desc = str(chat_payload.get("description") or "unknown error")
+                    return False, f"Chat ID 无效或无权限：{desc}"
+
+                bot_name = str((me_payload.get("result") or {}).get("username") or "")
+                chat_title = str((chat_payload.get("result") or {}).get("title") or (chat_payload.get("result") or {}).get("username") or "")
+                return True, f"连接成功：@{bot_name or 'bot'} -> {chat_title or self.chat_id}"
+        except Exception as exc:
+            return False, f"Telegram 测试失败：{exc}"
+
     @property
     def base_url(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"

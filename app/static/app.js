@@ -742,6 +742,10 @@ function adminUserItemHTML(row) {
   const disabled = Boolean(row.disabled);
   const disabledPill = disabled ? `<span class="pill fail">disabled</span>` : `<span class="pill ok">enabled</span>`;
   const adminPill = row.is_admin ? `<span class="pill">admin</span>` : "";
+  const source = String(row.login_source || "local").toLowerCase();
+  const sourcePill = source === "linuxdo"
+    ? `<span class="pill">linuxdo</span>`
+    : `<span class="pill">local</span>`;
   const disableAction = disabled ? "启用" : "禁用";
   const disableClass = disabled ? "" : "warn";
 
@@ -751,7 +755,7 @@ function adminUserItemHTML(row) {
         <div class="col"><strong>${escapeHtml(row.username || "")}</strong></div>
         <div class="small">#${row.id}</div>
       </div>
-      <div class="row" style="margin-top:4px;">${adminPill}${disabledPill}</div>
+      <div class="row" style="margin-top:4px;">${adminPill}${disabledPill}${sourcePill}</div>
       <div class="small">created=${escapeHtml(String(row.created_at || "-"))}</div>
       <div class="row" style="margin-top:8px;">
         <button class="sm set-reset-target">\u{1F3AF} 设为重置目标</button>
@@ -1171,6 +1175,13 @@ async function testTts() {
   setTestStatus("ttsTestStatus", Boolean(res.ok), res.message || "无返回");
 }
 
+async function testTelegram() {
+  setTestStatus("telegramTestStatus", true, "测试中...");
+  await saveSettings(fieldsAPI);
+  const res = await request("/api/test/telegram", { method: "POST" });
+  setTestStatus("telegramTestStatus", Boolean(res.ok), res.message || "无返回");
+}
+
 async function testCron() {
   const scheduleCron = (qs("schedule_cron")?.value || "").trim();
   const timezone = (qs("timezone")?.value || "").trim();
@@ -1415,6 +1426,18 @@ async function init() {
       await testTts();
     } catch (e) {
       setTestStatus("ttsTestStatus", false, e.message);
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  };
+
+  qs("testTelegramBtn").onclick = async () => {
+    const btn = qs("testTelegramBtn");
+    setButtonLoading(btn, true);
+    try {
+      await testTelegram();
+    } catch (e) {
+      setTestStatus("telegramTestStatus", false, e.message);
     } finally {
       setButtonLoading(btn, false);
     }
@@ -1673,6 +1696,7 @@ async function init() {
     await loadAll();
     setTestStatus("llmTestStatus", true, "未测试");
     setTestStatus("ttsTestStatus", true, "未测试");
+    setTestStatus("telegramTestStatus", true, "未测试");
     setEdgeVoicePreviewStatus(true, "可试听当前选择音色");
     setRssBatchImportStatus(true, "可粘贴 JSON 批量导入来源");
     setAdminUserStatus(true, "仅管理员可重置其他用户密码");
