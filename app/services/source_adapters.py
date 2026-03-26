@@ -5,7 +5,6 @@ from typing import Any
 from urllib.parse import urlencode
 
 import feedparser
-import httpx
 from dateutil import parser as date_parser
 
 from app.models import Source
@@ -94,51 +93,6 @@ def _from_arxiv(source: Source, config: dict[str, Any]) -> list[NormalizedItem]:
     return items
 
 
-async def _from_newsapi(source: Source, config: dict[str, Any], settings: dict[str, Any]) -> list[NormalizedItem]:
-    api_key = str(config.get("api_key") or settings.get("newsapi_global_key") or "").strip()
-    if not api_key:
-        raise ValueError(f"Source[{source.id}] NewsAPI 缺少 api_key")
-
-    query = str(config.get("query", "AI OR LLM OR artificial intelligence"))
-    language = str(config.get("language", "en"))
-    page_size = int(config.get("page_size", 30))
-    endpoint = str(config.get("endpoint", "https://newsapi.org/v2/everything"))
-    sort_by = str(config.get("sort_by", "publishedAt"))
-
-    params = {
-        "q": query,
-        "language": language,
-        "pageSize": max(1, min(page_size, 100)),
-        "sortBy": sort_by,
-    }
-
-    timeout_sec = int(settings.get("source_request_timeout_sec", 25))
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        resp = await client.get(endpoint, params=params, headers={"X-Api-Key": api_key})
-        resp.raise_for_status()
-        payload = resp.json()
-
-    articles = payload.get("articles", [])
-    items: list[NormalizedItem] = []
-    for article in articles:
-        source_name = article.get("source", {}).get("name") or source.name
-        description = _normalize_text(article.get("description", ""), 1200)
-        content = _normalize_text(article.get("content", ""), 1800)
-        items.append(
-            NormalizedItem(
-                source_id=source.id,
-                source_name=f"{source.name}:{source_name}"[:140],
-                title=_normalize_text(article.get("title", "Untitled"), 400),
-                link=_normalize_text(article.get("url", ""), 500),
-                summary=description,
-                content=content,
-                author=_normalize_text(article.get("author", ""), 120),
-                published_at=_parse_date(article.get("publishedAt")),
-            )
-        )
-    return items
-
-
 def _filter_by_keywords(items: list[NormalizedItem], keywords_text: str) -> list[NormalizedItem]:
     """Per-source keyword filtering (same logic as pipeline global filter)."""
     keywords = [kw.strip().lower() for kw in keywords_text.split(",") if kw.strip()]
@@ -164,8 +118,6 @@ async def fetch_and_transform_source(source: Source, settings: dict[str, Any]) -
         items = _from_rss(source, config)
     elif source_type == "arxiv":
         items = _from_arxiv(source, config)
-    elif source_type == "newsapi":
-        items = await _from_newsapi(source, config, settings)
     else:
         raise ValueError(f"不支持的 source_type: {source_type}")
 
@@ -185,4 +137,3 @@ async def fetch_and_transform_source(source: Source, settings: dict[str, Any]) -
         items=items,
     )
     return items, rss_xml
-

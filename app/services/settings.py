@@ -74,7 +74,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "telegram_bot_token": "",
     "telegram_chat_id": "",
     "telegram_send_audio": True,
-    "newsapi_global_key": "",
     "auth_blocked_usernames": [],
 }
 

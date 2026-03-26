@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class SourceBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    source_type: str = Field(pattern="^(rss|arxiv|newsapi)$")
+    source_type: str = Field(pattern="^(rss|arxiv)$")
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -118,6 +118,7 @@ class UserRead(BaseModel):
     created_at: datetime
     is_admin: bool
     disabled: bool = False
+    login_source: str = "local"
 
 
 class UserResetPasswordRequest(BaseModel):

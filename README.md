@@ -2,7 +2,7 @@
 
 自动化 AI 信息采集与播客生成平台（Docker 一键部署）。
 
-> 从 RSS / arXiv / NewsAPI 抓取内容 → LLM 归纳总结 → 生成播客文稿与音频（Edge TTS / 自定义 TTS）→ 推送到 Telegram。
+> 从 RSS / arXiv 抓取内容 → LLM 归纳总结 → 生成播客文稿与音频（Edge TTS / 自定义 TTS）→ 推送到 Telegram。
 
 ---
 
@@ -27,7 +27,7 @@
 
 ## 功能特性
 
-- 多来源采集：支持 `RSS`、`arXiv`、`NewsAPI`。
+- 多来源采集：支持 `RSS`、`arXiv`。
 - 内容处理链路：抓取、去重、关键词过滤、LLM 摘要、播客脚本生成。
 - TTS 合成：默认 `edge-tts`（免费），可切换 `custom_api`（OpenAI 兼容接口）。
 - Telegram 推送：优先推送文本摘要和材料，再推送音频。

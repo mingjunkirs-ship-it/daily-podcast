@@ -37,7 +37,6 @@ const fieldsAPI = [
   "telegram_bot_token",
   "telegram_chat_id",
   "telegram_send_audio",
-  "newsapi_global_key",
 ];
 
 const promptFields = [
@@ -1179,7 +1178,10 @@ async function testTelegram() {
   setTestStatus("telegramTestStatus", true, "测试中...");
   await saveSettings(fieldsAPI);
   const res = await request("/api/test/telegram", { method: "POST" });
-  setTestStatus("telegramTestStatus", Boolean(res.ok), res.message || "无返回");
+  const ok = Boolean(res.ok);
+  const message = res.message || "无返回";
+  setTestStatus("telegramTestStatus", ok, message);
+  showToast(ok ? "success" : "error", `Telegram 测试${ok ? "成功" : "失败"}：${message}`);
 }
 
 async function testCron() {
@@ -1438,6 +1440,7 @@ async function init() {
       await testTelegram();
     } catch (e) {
       setTestStatus("telegramTestStatus", false, e.message);
+      showToast("error", `Telegram 测试失败：${e.message}`);
     } finally {
       setButtonLoading(btn, false);
     }

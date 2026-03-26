@@ -37,19 +37,6 @@ CURATED_SOURCE_PRESETS: list[dict[str, Any]] = [
         },
     },
     {
-        "preset_id": "newsapi-ai-global",
-        "name": "NewsAPI AI Global",
-        "source_type": "newsapi",
-        "enabled": True,
-        "description": "全球 AI / LLM 相关新闻（需配置 NewsAPI Key）",
-        "config": {
-            "query": "(AI OR LLM OR \"artificial intelligence\" OR \"AI infra\")",
-            "language": "en",
-            "page_size": 40,
-            "sort_by": "publishedAt",
-        },
-    },
-    {
         "preset_id": "hf-blog-rss",
         "name": "HuggingFace Blog",
         "source_type": "rss",
