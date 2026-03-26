@@ -142,6 +142,70 @@ PROMPT_SETTING_KEYS = [
     "llm_episode_prompt_template",
 ]
 
+_EDGE_VOICE_ALIASES: dict[str, dict[str, str]] = {
+    "zh-CN": {
+        "Xiaoxiao": "晓晓", "Yunxi": "云希", "Yunjian": "云健", "Xiaoyi": "晓伊",
+        "Yunyang": "云扬", "Xiaomo": "晓墨", "Xiaorui": "晓睿", "Xiaoshuang": "晓双",
+        "Xiaohan": "晓涵", "Xiaochen": "晓辰",
+    },
+    "zh-TW": {"HsiaoChen": "曉臻", "YunJhe": "雲哲", "HsiaoYu": "曉雨"},
+    "zh-HK": {"HiuGaai": "曉佳", "WanLung": "雲龍", "HiuMaan": "曉曼"},
+    "ja-JP": {"Nanami": "七海", "Keita": "圭太", "Aoi": "葵", "Daichi": "大地"},
+    "ko-KR": {"SunHi": "선희", "InJoon": "인준", "JiMin": "지민", "SeoHyeon": "서현"},
+    "ru-RU": {"Svetlana": "Светлана", "Dmitry": "Дмитрий"},
+    "es-ES": {"Elvira": "Elvira", "Alvaro": "Álvaro", "Ximena": "Ximena"},
+    "fr-FR": {"Denise": "Denise", "Eloise": "Éloïse", "Henri": "Henri"},
+    "de-DE": {"Katja": "Katja", "Conrad": "Conrad", "Florian": "Florian"},
+    "pt-BR": {"Francisca": "Francisca", "Antonio": "Antônio", "Brenda": "Brenda"},
+    "en-US": {"Aria": "Aria", "Jenny": "Jenny", "Guy": "Guy", "Sara": "Sara", "Davis": "Davis"},
+    "en-GB": {"Sonia": "Sonia", "Ryan": "Ryan", "Maisie": "Maisie", "Thomas": "Thomas"},
+}
+
+
+def _edge_voice_locale(voice: str) -> str:
+    parts = str(voice or "").strip().split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return ""
+
+
+def _edge_voice_char_name(voice: str) -> str:
+    raw = str(voice or "").strip()
+    if not raw:
+        return ""
+
+    char_name = raw.rsplit("-", 1)[-1] if "-" in raw else raw
+    char_name = re.sub(r"Neural$", "", char_name).strip()
+    return char_name
+
+
+def _edge_voice_alias(locale: str, char_name: str) -> str:
+    local = _EDGE_VOICE_ALIASES.get(locale, {})
+    if char_name in local:
+        return local[char_name]
+
+    lang = locale.split("-")[0] if locale else ""
+    if lang:
+        for key, mapping in _EDGE_VOICE_ALIASES.items():
+            if key.startswith(f"{lang}-") and char_name in mapping:
+                return mapping[char_name]
+    return char_name
+
+
+def _edge_voice_alias_from_short_name(short_name: str, locale: str | None = None) -> str:
+    parsed_locale = (locale or _edge_voice_locale(short_name)).strip()
+    char_name = _edge_voice_char_name(short_name)
+    if not char_name:
+        return str(short_name or "").strip()
+    if not parsed_locale:
+        return char_name
+    return _edge_voice_alias(parsed_locale, char_name)
+
+
+def _edge_preview_text_for_voice(short_name: str) -> str:
+    alias = _edge_voice_alias_from_short_name(short_name)
+    return f"我是{alias}" if alias else "我是语音助手"
+
 
 def _prompt_snapshot(values: dict) -> dict[str, str]:
     snapshot: dict[str, str] = {}
@@ -378,7 +442,7 @@ async def api_test_edge_voice(payload: EdgeVoicePreviewRequest, db: Session = De
     if not voice:
         raise HTTPException(status_code=400, detail="voice 不能为空")
 
-    sample_text = f"我是{voice}"
+    sample_text = _edge_preview_text_for_voice(voice)
 
     settings = get_settings(db)
     preview_settings = dict(settings)
@@ -566,38 +630,9 @@ async def api_edge_tts_voices() -> dict:
                 return "Feminina" if g == "female" else "Masculina"
             return "Female" if g == "female" else "Male"
 
-        _voice_aliases: dict[str, dict[str, str]] = {
-            "zh-CN": {
-                "Xiaoxiao": "晓晓", "Yunxi": "云希", "Yunjian": "云健", "Xiaoyi": "晓伊",
-                "Yunyang": "云扬", "Xiaomo": "晓墨", "Xiaorui": "晓睿", "Xiaoshuang": "晓双",
-                "Xiaohan": "晓涵", "Xiaochen": "晓辰",
-            },
-            "zh-TW": {"HsiaoChen": "曉臻", "YunJhe": "雲哲", "HsiaoYu": "曉雨"},
-            "zh-HK": {"HiuGaai": "曉佳", "WanLung": "雲龍", "HiuMaan": "曉曼"},
-            "ja-JP": {"Nanami": "七海", "Keita": "圭太", "Aoi": "葵", "Daichi": "大地"},
-            "ko-KR": {"SunHi": "선희", "InJoon": "인준", "JiMin": "지민", "SeoHyeon": "서현"},
-            "ru-RU": {"Svetlana": "Светлана", "Dmitry": "Дмитрий"},
-            "es-ES": {"Elvira": "Elvira", "Alvaro": "Álvaro", "Ximena": "Ximena"},
-            "fr-FR": {"Denise": "Denise", "Eloise": "Éloïse", "Henri": "Henri"},
-            "de-DE": {"Katja": "Katja", "Conrad": "Conrad", "Florian": "Florian"},
-            "pt-BR": {"Francisca": "Francisca", "Antonio": "Antônio", "Brenda": "Brenda"},
-            "en-US": {"Aria": "Aria", "Jenny": "Jenny", "Guy": "Guy", "Sara": "Sara", "Davis": "Davis"},
-            "en-GB": {"Sonia": "Sonia", "Ryan": "Ryan", "Maisie": "Maisie", "Thomas": "Thomas"},
-        }
-
-        def _voice_alias(locale: str, char_name: str) -> str:
-            local = _voice_aliases.get(locale, {})
-            if char_name in local:
-                return local[char_name]
-            lang = locale.split("-")[0]
-            for key, mapping in _voice_aliases.items():
-                if key.startswith(f"{lang}-") and char_name in mapping:
-                    return mapping[char_name]
-            return char_name
-
         def _build_label(short_name: str, locale: str, gender: str) -> str:
-            char_name = short_name.rsplit("-", 1)[-1].replace("Neural", "").strip()
-            alias = _voice_alias(locale, char_name)
+            char_name = _edge_voice_char_name(short_name)
+            alias = _edge_voice_alias_from_short_name(short_name, locale)
             g = _gender_label(locale, gender) if gender else ""
 
             if alias != char_name:
