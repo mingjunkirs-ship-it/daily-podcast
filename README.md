@@ -234,5 +234,4 @@ python -m compileall app
 
 ## 许可证
 
-当前仓库暂未附带 `LICENSE` 文件。开源发布前建议补充明确许可证（如 MIT / Apache-2.0）。
-
+本项目使用 `MIT License`，详见 `LICENSE`。
