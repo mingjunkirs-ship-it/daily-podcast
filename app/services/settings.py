@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AppSetting
+from app.models import AppSetting, UserSetting
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -76,9 +75,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "telegram_chat_id": "",
     "telegram_send_audio": True,
     "newsapi_global_key": "",
-    "rsshub_base_url": os.getenv("RSSHUB_BASE_URL", "http://rsshub:1200"),
     "auth_blocked_usernames": [],
 }
+
+GLOBAL_ONLY_SETTING_KEYS = {"auth_blocked_usernames"}
+USER_SCOPED_SETTING_KEYS = set(DEFAULT_SETTINGS.keys()) - GLOBAL_ONLY_SETTING_KEYS
 
 
 def _to_json(value: Any) -> str:
@@ -103,17 +104,71 @@ def ensure_default_settings(db: Session) -> None:
         db.commit()
 
 
-def get_settings(db: Session) -> dict[str, Any]:
+def migrate_legacy_global_user_settings(db: Session, username: str) -> bool:
+    target_username = str(username or "").strip()
+    if not target_username:
+        return False
+
+    changed = False
+    for key in USER_SCOPED_SETTING_KEYS:
+        app_row = db.get(AppSetting, key)
+        if app_row is None:
+            continue
+
+        try:
+            value = _from_json(app_row.value_json)
+        except Exception:
+            continue
+
+        if value == DEFAULT_SETTINGS.get(key):
+            continue
+
+        exists = db.scalar(select(UserSetting).where(UserSetting.username == target_username, UserSetting.key == key))
+        if exists is not None:
+            continue
+
+        db.add(UserSetting(username=target_username, key=key, value_json=app_row.value_json))
+        changed = True
+
+    if changed:
+        db.commit()
+    return changed
+
+
+def get_settings(db: Session, username: str | None = None) -> dict[str, Any]:
     values = dict(DEFAULT_SETTINGS)
     rows = db.scalars(select(AppSetting)).all()
+
+    if username:
+        for row in rows:
+            if row.key in GLOBAL_ONLY_SETTING_KEYS:
+                values[row.key] = _from_json(row.value_json)
+
+        user_rows = db.scalars(select(UserSetting).where(UserSetting.username == username)).all()
+        for row in user_rows:
+            values[row.key] = _from_json(row.value_json)
+        return values
+
     for row in rows:
         values[row.key] = _from_json(row.value_json)
     return values
 
 
-def set_settings(db: Session, values: dict[str, Any]) -> dict[str, Any]:
+def set_settings(db: Session, values: dict[str, Any], username: str | None = None) -> dict[str, Any]:
     if not values:
-        return get_settings(db)
+        return get_settings(db, username=username)
+
+    if username:
+        for key, value in values.items():
+            if key in GLOBAL_ONLY_SETTING_KEYS:
+                continue
+            row = db.scalar(select(UserSetting).where(UserSetting.username == username, UserSetting.key == key))
+            if row is None:
+                db.add(UserSetting(username=username, key=key, value_json=_to_json(value)))
+            else:
+                row.value_json = _to_json(value)
+        db.commit()
+        return get_settings(db, username=username)
 
     for key, value in values.items():
         row = db.get(AppSetting, key)

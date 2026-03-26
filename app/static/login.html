@@ -186,10 +186,10 @@
 
       <form id="loginForm">
         <label for="username">用户名</label>
-        <input id="username" name="username" value="admin" autocomplete="username" required />
+        <input id="username" name="username" placeholder="请输入用户名" autocomplete="username" required />
 
         <label for="password">密码</label>
-        <input id="password" name="password" type="password" value="adminadmin" autocomplete="current-password" required />
+        <input id="password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
 
         <button type="submit" class="submit-btn" id="submitBtn">登录</button>
       </form>
@@ -362,6 +362,9 @@
       });
 
       loadRegisterOptions();
+
+      // 避免初始渲染出现默认密码占位误导
+      qs("password").value = "";
     </script>
   </body>
 </html>

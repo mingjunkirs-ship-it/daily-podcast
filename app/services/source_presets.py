@@ -68,13 +68,14 @@ def list_presets() -> list[dict[str, Any]]:
 
 def import_presets(
     db: Session,
+    owner_username: str,
     preset_ids: list[str] | None = None,
     overwrite_existing: bool = False,
 ) -> dict[str, int]:
     selected_ids = set(preset_ids or [preset["preset_id"] for preset in CURATED_SOURCE_PRESETS])
     selected_presets = [preset for preset in CURATED_SOURCE_PRESETS if preset["preset_id"] in selected_ids]
 
-    existing_sources = db.scalars(select(Source)).all()
+    existing_sources = db.scalars(select(Source).where(Source.owner_username == owner_username)).all()
     existing_by_name_type = {(source.name.strip().lower(), source.source_type.strip().lower()): source for source in existing_sources}
 
     created = 0
@@ -90,6 +91,7 @@ def import_presets(
             db.add(
                 Source(
                     name=preset["name"],
+                    owner_username=owner_username,
                     source_type=preset["source_type"],
                     enabled=bool(preset.get("enabled", True)),
                     config_json=config_json,
@@ -113,4 +115,3 @@ def import_presets(
         "updated": updated,
         "skipped": skipped,
     }
-

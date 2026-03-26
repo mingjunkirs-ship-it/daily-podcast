@@ -17,6 +17,7 @@ class Source(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    owner_username: Mapped[str] = mapped_column(String(64), default="admin", nullable=False, index=True)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
@@ -36,6 +37,7 @@ class Episode(Base):
     __tablename__ = "episodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_username: Mapped[str] = mapped_column(String(64), default="admin", nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
 
@@ -57,6 +59,16 @@ class AppSetting(Base):
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class UserSetting(Base):
+    __tablename__ = "user_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    key: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     value_json: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

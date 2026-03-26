@@ -170,19 +170,6 @@ class ImportRssBatchResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-class AddRssHubSourceRequest(BaseModel):
-    route: str = Field(min_length=2, max_length=1000)
-    name: str | None = Field(default=None, max_length=120)
-    enabled: bool = True
-
-
-class RSSHubTemplateRead(BaseModel):
-    key: str
-    title: str
-    route: str
-    note: str
-
-
 class SourceConnectivityTestResponse(BaseModel):
     source_id: int
     source_name: str

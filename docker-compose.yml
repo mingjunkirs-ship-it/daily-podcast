@@ -2,8 +2,6 @@ services:
   podcast-builder:
     build: .
     container_name: ai-podcast-builder
-    depends_on:
-      - rsshub
     ports:
       - "26552:8000"
     environment:
@@ -13,17 +11,6 @@ services:
       - AUTH_COOKIE_SECURE=false
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=adminadmin
-      - RSSHUB_BASE_URL=http://rsshub:1200
     volumes:
       - ./data:/app/data
-    restart: unless-stopped
-
-  rsshub:
-    image: diygod/rsshub:latest
-    container_name: ai-podcast-rsshub
-    ports:
-      - "26553:1200"
-    environment:
-      - NODE_ENV=production
-      - CACHE_TYPE=memory
     restart: unless-stopped

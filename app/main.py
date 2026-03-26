@@ -21,9 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.config import AUDIO_DIR, FEEDS_DIR, NOTES_DIR
 from app.database import get_db, init_db
-from app.models import AdminUser, Episode, PendingRegistration, Source
+from app.models import AdminUser, Episode, PendingRegistration, Source, UserSetting
 from app.schemas import (
-    AddRssHubSourceRequest,
     AddRssSourceRequest,
     AuthMeResponse,
     BatchRssSourceItem,
@@ -45,7 +44,6 @@ from app.schemas import (
     PromptVersionRead,
     RegisterOptionsResponse,
     RegisterRequest,
-    RSSHubTemplateRead,
     RunNowResponse,
     SettingsRead,
     SourceConnectivityTestResponse,
@@ -62,6 +60,7 @@ from app.services.pipeline import PipelineRunner
 from app.services.scheduler import SchedulerService, _parse_cron
 from app.services.auth import (
     SESSION_COOKIE_NAME,
+    admin_username,
     auth_allow_register,
     auth_cookie_secure,
     authenticate_user,
@@ -76,8 +75,7 @@ from app.services.auth import (
     update_user_password,
 )
 from app.services.llm_client import LLMClient
-from app.services.rsshub_templates import list_rsshub_templates
-from app.services.settings import ensure_default_settings, get_settings, set_settings
+from app.services.settings import ensure_default_settings, get_settings, migrate_legacy_global_user_settings, set_settings
 from app.services.source_adapters import fetch_and_transform_source
 from app.services.source_presets import import_presets, list_presets
 from app.services.tts_client import TTSClient
@@ -95,6 +93,7 @@ async def lifespan(app: FastAPI):
     try:
         ensure_default_settings(db)
         ensure_default_admin(db)
+        migrate_legacy_global_user_settings(db, admin_username())
         settings = get_settings(db)
     finally:
         db.close()
@@ -161,6 +160,27 @@ def _ensure_admin(request: Request) -> str:
     if not is_admin_username(username):
         raise HTTPException(status_code=403, detail="仅管理员可执行该操作")
     return username
+
+
+def _require_username(request: Request) -> str:
+    username = _current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return username
+
+
+def _get_owned_source(db: Session, source_id: int, username: str) -> Source:
+    row = db.scalar(select(Source).where(Source.id == source_id, Source.owner_username == username))
+    if not row:
+        raise HTTPException(status_code=404, detail="source not found")
+    return row
+
+
+def _get_owned_episode(db: Session, episode_id: int, username: str) -> Episode:
+    row = db.scalar(select(Episode).where(Episode.id == episode_id, Episode.owner_username == username))
+    if not row:
+        raise HTTPException(status_code=404, detail="episode not found")
+    return row
 
 
 def _default_source_name_from_url(url: str) -> str:
@@ -561,6 +581,7 @@ def api_auth_register(payload: RegisterRequest, db: Session = Depends(get_db)) -
     if pending:
         db.delete(pending)
     db.commit()
+    app.state.scheduler.reschedule_all()
     return {
         "ok": True,
         "pending": False,
@@ -687,6 +708,7 @@ def api_auth_set_user_disabled(
         raise HTTPException(status_code=404, detail="目标用户不存在")
 
     _set_user_blocked(db, target, bool(payload.disabled))
+    app.state.scheduler.reschedule_all()
     action = "禁用" if payload.disabled else "启用"
     return {"message": f"管理员 {admin_user} 已{action}用户 {target}"}
 
@@ -706,9 +728,23 @@ def api_auth_delete_user(username: str, request: Request, db: Session = Depends(
     if not user:
         raise HTTPException(status_code=404, detail="目标用户不存在")
 
+    user_sources = db.scalars(select(Source).where(Source.owner_username == target)).all()
+    for source in user_sources:
+        db.delete(source)
+
+    user_episodes = db.scalars(select(Episode).where(Episode.owner_username == target)).all()
+    for episode in user_episodes:
+        _remove_episode_files(episode)
+        db.delete(episode)
+
+    user_settings_rows = db.scalars(select(UserSetting).where(UserSetting.username == target)).all()
+    for row in user_settings_rows:
+        db.delete(row)
+
     db.delete(user)
     db.commit()
     _set_user_blocked(db, target, False)
+    app.state.scheduler.reschedule_all()
     return {"message": f"已删除用户 {target}"}
 
 
@@ -743,6 +779,7 @@ def api_auth_approve_registration(registration_id: int, request: Request, db: Se
     row.decided_at = datetime.now(timezone.utc)
     row.decided_by = admin_user
     db.commit()
+    app.state.scheduler.reschedule_all()
     return {"message": f"已通过用户注册：{row.username}"}
 
 
@@ -761,27 +798,31 @@ def api_auth_reject_registration(registration_id: int, request: Request, db: Ses
 
 
 @app.get("/api/settings", response_model=SettingsRead)
-def api_get_settings(db: Session = Depends(get_db)) -> SettingsRead:
-    return SettingsRead(values=get_settings(db))
+def api_get_settings(request: Request, db: Session = Depends(get_db)) -> SettingsRead:
+    username = _require_username(request)
+    return SettingsRead(values=get_settings(db, username=username))
 
 
 @app.put("/api/settings", response_model=SettingsRead)
-def api_set_settings(payload: SettingsUpdate, db: Session = Depends(get_db)) -> SettingsRead:
-    values = set_settings(db, payload.values)
-    app.state.scheduler.reschedule(values)
+def api_set_settings(payload: SettingsUpdate, request: Request, db: Session = Depends(get_db)) -> SettingsRead:
+    username = _require_username(request)
+    values = set_settings(db, payload.values, username=username)
+    app.state.scheduler.reschedule_all()
     return SettingsRead(values=values)
 
 
 @app.get("/api/prompt-versions", response_model=list[PromptVersionRead])
-def api_list_prompt_versions(db: Session = Depends(get_db)) -> list[PromptVersionRead]:
-    values = get_settings(db)
+def api_list_prompt_versions(request: Request, db: Session = Depends(get_db)) -> list[PromptVersionRead]:
+    username = _require_username(request)
+    values = get_settings(db, username=username)
     versions = _normalize_prompt_versions(values)
     return [PromptVersionRead.model_validate(row) for row in versions]
 
 
 @app.post("/api/prompt-versions", response_model=PromptVersionRead)
-def api_create_prompt_version(payload: PromptVersionCreateRequest, db: Session = Depends(get_db)) -> PromptVersionRead:
-    values = get_settings(db)
+def api_create_prompt_version(payload: PromptVersionCreateRequest, request: Request, db: Session = Depends(get_db)) -> PromptVersionRead:
+    username = _require_username(request)
+    values = get_settings(db, username=username)
     versions = _normalize_prompt_versions(values)
 
     row = {
@@ -792,60 +833,65 @@ def api_create_prompt_version(payload: PromptVersionCreateRequest, db: Session =
     }
     versions.insert(0, row)
     versions = versions[:80]
-    set_settings(db, {PROMPT_VERSION_KEY: versions})
+    set_settings(db, {PROMPT_VERSION_KEY: versions}, username=username)
     return PromptVersionRead.model_validate(row)
 
 
 @app.post("/api/prompt-versions/{version_id}/apply", response_model=SettingsRead)
-def api_apply_prompt_version(version_id: str, db: Session = Depends(get_db)) -> SettingsRead:
-    values = get_settings(db)
+def api_apply_prompt_version(version_id: str, request: Request, db: Session = Depends(get_db)) -> SettingsRead:
+    username = _require_username(request)
+    values = get_settings(db, username=username)
     versions = _normalize_prompt_versions(values)
     target = next((row for row in versions if row.get("id") == version_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="prompt version not found")
 
-    updated = set_settings(db, target["prompts"])
-    app.state.scheduler.reschedule(updated)
+    updated = set_settings(db, target["prompts"], username=username)
+    app.state.scheduler.reschedule_all()
     return SettingsRead(values=updated)
 
 
 @app.delete("/api/prompt-versions/{version_id}")
-def api_delete_prompt_version(version_id: str, db: Session = Depends(get_db)) -> dict:
-    values = get_settings(db)
+def api_delete_prompt_version(version_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    username = _require_username(request)
+    values = get_settings(db, username=username)
     versions = _normalize_prompt_versions(values)
     remained = [row for row in versions if row.get("id") != version_id]
     if len(remained) == len(versions):
         raise HTTPException(status_code=404, detail="prompt version not found")
 
-    set_settings(db, {PROMPT_VERSION_KEY: remained})
+    set_settings(db, {PROMPT_VERSION_KEY: remained}, username=username)
     return {"deleted": version_id}
 
 
 @app.post("/api/test/llm", response_model=ConnectionTestResponse)
-async def api_test_llm_connection(db: Session = Depends(get_db)) -> ConnectionTestResponse:
-    settings = get_settings(db)
+async def api_test_llm_connection(request: Request, db: Session = Depends(get_db)) -> ConnectionTestResponse:
+    username = _require_username(request)
+    settings = get_settings(db, username=username)
     client = LLMClient(settings)
     ok, message = await client.test_connection()
     return ConnectionTestResponse(ok=ok, message=message)
 
 
 @app.post("/api/test/tts", response_model=ConnectionTestResponse)
-async def api_test_tts_connection(db: Session = Depends(get_db)) -> ConnectionTestResponse:
-    settings = get_settings(db)
+async def api_test_tts_connection(request: Request, db: Session = Depends(get_db)) -> ConnectionTestResponse:
+    username = _require_username(request)
+    settings = get_settings(db, username=username)
     client = TTSClient(settings)
     ok, message = await client.test_connection()
     return ConnectionTestResponse(ok=ok, message=message)
 
 
 @app.post("/api/test/edge-voice")
-async def api_test_edge_voice(payload: EdgeVoicePreviewRequest, db: Session = Depends(get_db)) -> Response:
+async def api_test_edge_voice(payload: EdgeVoicePreviewRequest, request: Request, db: Session = Depends(get_db)) -> Response:
     voice = str(payload.voice or "").strip()
     if not voice:
         raise HTTPException(status_code=400, detail="voice 不能为空")
 
     sample_text = _edge_preview_text_for_voice(voice)
 
-    settings = get_settings(db)
+    username = _require_username(request)
+    settings = get_settings(db, username=username)
     preview_settings = dict(settings)
     preview_settings["tts_enabled"] = True
     preview_settings["tts_provider"] = "edge_tts"
@@ -1105,14 +1151,14 @@ async def api_edge_tts_voices() -> dict:
         return fallback
 
 
-@app.get("/api/rsshub/templates", response_model=list[RSSHubTemplateRead])
-def api_list_rsshub_templates() -> list[RSSHubTemplateRead]:
-    return [RSSHubTemplateRead.model_validate(item) for item in list_rsshub_templates()]
-
-
 @app.get("/api/sources", response_model=list[SourceRead])
-def api_list_sources(db: Session = Depends(get_db)) -> list[SourceRead]:
-    rows = db.scalars(select(Source).order_by(desc(Source.created_at))).all()
+def api_list_sources(request: Request, db: Session = Depends(get_db)) -> list[SourceRead]:
+    username = _require_username(request)
+    rows = db.scalars(
+        select(Source)
+        .where(Source.owner_username == username)
+        .order_by(desc(Source.created_at))
+    ).all()
     result: list[SourceRead] = []
     for row in rows:
         result.append(
@@ -1132,12 +1178,11 @@ def api_list_sources(db: Session = Depends(get_db)) -> list[SourceRead]:
 
 
 @app.post("/api/sources/{source_id}/test", response_model=SourceConnectivityTestResponse)
-async def api_test_source_connectivity(source_id: int, db: Session = Depends(get_db)) -> SourceConnectivityTestResponse:
-    source = db.get(Source, source_id)
-    if not source:
-        raise HTTPException(status_code=404, detail="source not found")
+async def api_test_source_connectivity(source_id: int, request: Request, db: Session = Depends(get_db)) -> SourceConnectivityTestResponse:
+    username = _require_username(request)
+    source = _get_owned_source(db, source_id, username)
 
-    settings = get_settings(db)
+    settings = get_settings(db, username=username)
     try:
         items, _ = await fetch_and_transform_source(source, settings)
         source.last_sync_at = datetime.now(timezone.utc)
@@ -1163,9 +1208,11 @@ async def api_test_source_connectivity(source_id: int, db: Session = Depends(get
 
 
 @app.post("/api/sources", response_model=SourceRead)
-def api_create_source(payload: SourceCreate, db: Session = Depends(get_db)) -> SourceRead:
+def api_create_source(payload: SourceCreate, request: Request, db: Session = Depends(get_db)) -> SourceRead:
+    username = _require_username(request)
     row = Source(
         name=payload.name,
+        owner_username=username,
         source_type=payload.source_type,
         enabled=payload.enabled,
         config_json=json.dumps(payload.config, ensure_ascii=False),
@@ -1187,13 +1234,15 @@ def api_create_source(payload: SourceCreate, db: Session = Depends(get_db)) -> S
 
 
 @app.post("/api/sources/rss", response_model=SourceRead)
-def api_create_rss_source(payload: AddRssSourceRequest, db: Session = Depends(get_db)) -> SourceRead:
+def api_create_rss_source(payload: AddRssSourceRequest, request: Request, db: Session = Depends(get_db)) -> SourceRead:
+    username = _require_username(request)
     url = _validate_rss_url(payload.url)
 
     name = (payload.name or "").strip() or _default_source_name_from_url(url)
     config = {"url": url}
     row = Source(
         name=name,
+        owner_username=username,
         source_type="rss",
         enabled=payload.enabled,
         config_json=json.dumps(config, ensure_ascii=False),
@@ -1215,12 +1264,16 @@ def api_create_rss_source(payload: AddRssSourceRequest, db: Session = Depends(ge
 
 
 @app.post("/api/sources/import-rss", response_model=ImportRssBatchResponse)
-def api_import_rss_batch(payload: ImportRssBatchRequest, db: Session = Depends(get_db)) -> ImportRssBatchResponse:
+def api_import_rss_batch(payload: ImportRssBatchRequest, request: Request, db: Session = Depends(get_db)) -> ImportRssBatchResponse:
+    username = _require_username(request)
     rows = payload.items or []
     if not rows:
         raise HTTPException(status_code=400, detail="items 不能为空")
 
-    existing_rss = db.scalars(select(Source).where(Source.source_type == "rss")).all()
+    existing_rss = db.scalars(
+        select(Source)
+        .where(Source.owner_username == username, Source.source_type == "rss")
+    ).all()
     existing_by_url: dict[str, Source] = {}
     for source in existing_rss:
         try:
@@ -1271,9 +1324,6 @@ def api_import_rss_batch(payload: ImportRssBatchRequest, db: Session = Depends(g
                 existing_config = json.loads(existing.config_json or "{}")
             except Exception:
                 existing_config = {}
-            if existing_config.get("rsshub_route") and "rsshub_route" not in config:
-                config["rsshub_route"] = existing_config.get("rsshub_route")
-
             existing.name = name
             existing.enabled = bool(item.enabled)
             existing.config_json = json.dumps(config, ensure_ascii=False)
@@ -1282,6 +1332,7 @@ def api_import_rss_batch(payload: ImportRssBatchRequest, db: Session = Depends(g
 
         source = Source(
             name=name,
+            owner_username=username,
             source_type="rss",
             enabled=bool(item.enabled),
             config_json=json.dumps(config, ensure_ascii=False),
@@ -1299,56 +1350,6 @@ def api_import_rss_batch(payload: ImportRssBatchRequest, db: Session = Depends(g
     )
 
 
-@app.post("/api/sources/rsshub", response_model=SourceRead)
-async def api_create_rsshub_source(payload: AddRssHubSourceRequest, db: Session = Depends(get_db)) -> SourceRead:
-    route = payload.route.strip()
-    if not route.startswith("/"):
-        route = f"/{route}"
-
-    settings = get_settings(db)
-    base_url = str(settings.get("rsshub_base_url", "http://rsshub:1200")).strip().rstrip("/")
-    if not (base_url.startswith("http://") or base_url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="rsshub_base_url 配置无效")
-
-    rss_url = f"{base_url}{route}"
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(rss_url)
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=400, detail=f"RSSHub 路由不可用，HTTP {resp.status_code}")
-        text = resp.text.lower()
-        if "<rss" not in text and "<feed" not in text:
-            raise HTTPException(status_code=400, detail="RSSHub 返回内容不是有效 RSS/Atom")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"访问 RSSHub 失败：{exc}") from exc
-
-    default_name = f"RSSHub {route}"[:120]
-    name = (payload.name or "").strip() or default_name
-    config = {"url": rss_url, "rsshub_route": route}
-    row = Source(
-        name=name,
-        source_type="rss",
-        enabled=payload.enabled,
-        config_json=json.dumps(config, ensure_ascii=False),
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return SourceRead(
-        id=row.id,
-        name=row.name,
-        source_type=row.source_type,
-        enabled=row.enabled,
-        config=config,
-        last_sync_at=row.last_sync_at,
-        last_error=row.last_error,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
-
-
 @app.get("/api/source-presets", response_model=list[SourcePresetRead])
 def api_source_presets() -> list[SourcePresetRead]:
     return [SourcePresetRead.model_validate(row) for row in list_presets()]
@@ -1357,10 +1358,13 @@ def api_source_presets() -> list[SourcePresetRead]:
 @app.post("/api/sources/import-defaults", response_model=ImportPresetsResponse)
 def api_import_default_sources(
     payload: ImportPresetsRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> ImportPresetsResponse:
+    username = _require_username(request)
     result = import_presets(
         db,
+        owner_username=username,
         preset_ids=payload.preset_ids,
         overwrite_existing=payload.overwrite_existing,
     )
@@ -1368,10 +1372,9 @@ def api_import_default_sources(
 
 
 @app.put("/api/sources/{source_id}", response_model=SourceRead)
-def api_update_source(source_id: int, payload: SourceUpdate, db: Session = Depends(get_db)) -> SourceRead:
-    row = db.get(Source, source_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="source not found")
+def api_update_source(source_id: int, payload: SourceUpdate, request: Request, db: Session = Depends(get_db)) -> SourceRead:
+    username = _require_username(request)
+    row = _get_owned_source(db, source_id, username)
 
     if payload.name is not None:
         row.name = payload.name
@@ -1396,24 +1399,25 @@ def api_update_source(source_id: int, payload: SourceUpdate, db: Session = Depen
 
 
 @app.delete("/api/sources/{source_id}")
-def api_delete_source(source_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(Source, source_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="source not found")
+def api_delete_source(source_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    username = _require_username(request)
+    row = _get_owned_source(db, source_id, username)
     db.delete(row)
     db.commit()
     return {"deleted": source_id}
 
 
 @app.post("/api/run-now", response_model=RunNowResponse)
-async def api_run_now() -> RunNowResponse:
-    episode_id = await app.state.runner.queue_once(trigger="manual")
+async def api_run_now(request: Request) -> RunNowResponse:
+    username = _require_username(request)
+    episode_id = await app.state.runner.queue_once(trigger="manual", owner_username=username)
     return RunNowResponse(message=f"任务已启动：episode #{episode_id}", episode_id=episode_id)
 
 
 @app.post("/api/rebuild-feeds")
-async def api_rebuild_feeds() -> dict:
-    result = await app.state.runner.rebuild_source_feeds()
+async def api_rebuild_feeds(request: Request) -> dict:
+    username = _require_username(request)
+    result = await app.state.runner.rebuild_source_feeds(owner_username=username)
     return {"ok": True, **result}
 
 
@@ -1429,24 +1433,28 @@ def _remove_episode_files(episode: Episode) -> None:
 
 
 @app.get("/api/episodes", response_model=list[EpisodeRead])
-def api_list_episodes(db: Session = Depends(get_db)) -> list[EpisodeRead]:
-    rows = db.scalars(select(Episode).order_by(desc(Episode.created_at)).limit(30)).all()
+def api_list_episodes(request: Request, db: Session = Depends(get_db)) -> list[EpisodeRead]:
+    username = _require_username(request)
+    rows = db.scalars(
+        select(Episode)
+        .where(Episode.owner_username == username)
+        .order_by(desc(Episode.created_at))
+        .limit(30)
+    ).all()
     return [EpisodeRead.model_validate(row) for row in rows]
 
 
 @app.get("/api/episodes/{episode_id}", response_model=EpisodeRead)
-def api_get_episode(episode_id: int, db: Session = Depends(get_db)) -> EpisodeRead:
-    row = db.get(Episode, episode_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="episode not found")
+def api_get_episode(episode_id: int, request: Request, db: Session = Depends(get_db)) -> EpisodeRead:
+    username = _require_username(request)
+    row = _get_owned_episode(db, episode_id, username)
     return EpisodeRead.model_validate(row)
 
 
 @app.delete("/api/episodes/{episode_id}")
-def api_delete_episode(episode_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(Episode, episode_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="episode not found")
+def api_delete_episode(episode_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    username = _require_username(request)
+    row = _get_owned_episode(db, episode_id, username)
 
     status = str(row.status or "").lower()
     if status in {"pending", "running"}:
@@ -1459,8 +1467,9 @@ def api_delete_episode(episode_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @app.delete("/api/episodes")
-def api_clear_episodes(db: Session = Depends(get_db)) -> dict:
-    rows = db.scalars(select(Episode)).all()
+def api_clear_episodes(request: Request, db: Session = Depends(get_db)) -> dict:
+    username = _require_username(request)
+    rows = db.scalars(select(Episode).where(Episode.owner_username == username)).all()
     running = [row.id for row in rows if str(row.status or "").lower() in {"pending", "running"}]
     if running:
         raise HTTPException(status_code=400, detail=f"存在执行中任务，暂不能清空：{running[:5]}")
@@ -1475,7 +1484,9 @@ def api_clear_episodes(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/rss/sources/{source_id}.xml")
-def api_source_feed(source_id: int) -> Response:
+def api_source_feed(source_id: int, request: Request, db: Session = Depends(get_db)) -> Response:
+    username = _require_username(request)
+    _get_owned_source(db, source_id, username)
     path = FEEDS_DIR / f"source-{source_id}.xml"
     if not path.exists():
         raise HTTPException(status_code=404, detail="feed not found")
@@ -1483,15 +1494,20 @@ def api_source_feed(source_id: int) -> Response:
 
 
 @app.get("/rss/aggregated.xml")
-def api_aggregated_feed() -> Response:
-    path = FEEDS_DIR / "aggregated.xml"
+def api_aggregated_feed(request: Request) -> Response:
+    username = _require_username(request)
+    path = FEEDS_DIR / f"aggregated-{username}.xml"
     if not path.exists():
         raise HTTPException(status_code=404, detail="feed not found")
     return Response(path.read_text(encoding="utf-8"), media_type="application/rss+xml")
 
 
 @app.get("/media/audio/file/{filename}")
-def api_audio_file(filename: str) -> FileResponse:
+def api_audio_file(filename: str, request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    username = _require_username(request)
+    row = db.scalar(select(Episode).where(Episode.owner_username == username, Episode.audio_file == filename))
+    if not row:
+        raise HTTPException(status_code=404, detail="audio not found")
     path = AUDIO_DIR / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="audio not found")
@@ -1499,7 +1515,11 @@ def api_audio_file(filename: str) -> FileResponse:
 
 
 @app.get("/media/notes/file/{filename}")
-def api_notes_file(filename: str) -> FileResponse:
+def api_notes_file(filename: str, request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    username = _require_username(request)
+    row = db.scalar(select(Episode).where(Episode.owner_username == username, Episode.notes_file == filename))
+    if not row:
+        raise HTTPException(status_code=404, detail="notes not found")
     path = NOTES_DIR / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="notes not found")

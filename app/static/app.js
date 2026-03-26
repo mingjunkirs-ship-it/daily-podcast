@@ -88,7 +88,7 @@ const RSS_BATCH_IMPORT_EXAMPLE = `{
     },
     {
       "name": "arXiv cs.CL",
-      "url": "https://rsshub.app/arxiv/cs.CL",
+      "url": "https://export.arxiv.org/rss/cs.CL",
       "enabled": true,
       "keywords": "large language model, benchmark",
       "max_items": 15
@@ -902,7 +902,7 @@ function renderSources(sources) {
   if (sources.length) {
     qs("sourcesList").innerHTML = sources.map(sourceItemHTML).join("");
   } else {
-    renderEmptyState("sourcesList", "\u{1F4E1}", "暂无来源", "通过上方表单添加 RSS、arXiv 或 RSSHub 来源");
+    renderEmptyState("sourcesList", "\u{1F4E1}", "暂无来源", "通过上方表单添加 RSS 来源");
   }
 }
 

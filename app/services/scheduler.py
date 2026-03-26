@@ -4,9 +4,14 @@ import asyncio
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import select
 from zoneinfo import ZoneInfo
 
+from app.database import SessionLocal
+from app.models import AdminUser
+from app.services.auth import is_admin_username
 from app.services.pipeline import PipelineRunner
+from app.services.settings import get_settings
 
 
 def _parse_cron(expr: str) -> dict[str, str]:
@@ -24,18 +29,14 @@ def _parse_cron(expr: str) -> dict[str, str]:
 
 
 class SchedulerService:
-    def __init__(self, runner: PipelineRunner) -> None:
+    def __init__(self, runner: PipelineRunner, session_factory=SessionLocal) -> None:
         self.runner = runner
+        self.session_factory = session_factory
         self.scheduler: AsyncIOScheduler | None = None
 
-    def start(self, settings: dict[str, Any]) -> None:
-        timezone = str(settings.get("timezone", "Asia/Shanghai"))
-        try:
-            zone = ZoneInfo(timezone)
-        except Exception:
-            zone = ZoneInfo("UTC")
-        self.scheduler = AsyncIOScheduler(timezone=zone)
-        self.reschedule(settings)
+    def start(self, settings: dict[str, Any] | None = None) -> None:
+        self.scheduler = AsyncIOScheduler(timezone=ZoneInfo("UTC"))
+        self.reschedule_all()
         self.scheduler.start()
 
     def shutdown(self) -> None:
@@ -43,31 +44,49 @@ class SchedulerService:
             self.scheduler.shutdown(wait=False)
             self.scheduler = None
 
-    async def _run_scheduled(self) -> None:
-        await self.runner.run_once(trigger="scheduled")
+    async def _run_scheduled_for_user(self, username: str) -> None:
+        await self.runner.run_once(trigger="scheduled", owner_username=username)
 
-    def reschedule(self, settings: dict[str, Any]) -> None:
+    def _list_usernames(self) -> list[str]:
+        with self.session_factory() as db:
+            rows = db.scalars(select(AdminUser.username).order_by(AdminUser.username)).all()
+            return [str(item).strip() for item in rows if str(item).strip()]
+
+    def reschedule_all(self) -> None:
         if not self.scheduler:
             return
-
-        enabled = bool(settings.get("schedule_enabled", True))
         self.scheduler.remove_all_jobs()
-        if not enabled:
-            return
+        usernames = self._list_usernames()
 
-        cron = str(settings.get("schedule_cron", "0 8 * * *"))
-        trigger_args = _parse_cron(cron)
-        timezone = str(settings.get("timezone", "Asia/Shanghai"))
-        try:
-            zone = ZoneInfo(timezone)
-        except Exception:
-            zone = ZoneInfo("UTC")
+        with self.session_factory() as db:
+            global_settings = get_settings(db)
+            blocked = {
+                str(item).strip()
+                for item in global_settings.get("auth_blocked_usernames", [])
+                if str(item).strip()
+            }
+            for username in usernames:
+                settings = get_settings(db, username=username)
+                if username in blocked and not is_admin_username(username):
+                    continue
 
-        self.scheduler.add_job(
-            func=lambda: asyncio.create_task(self._run_scheduled()),
-            trigger="cron",
-            id="daily-podcast-job",
-            replace_existing=True,
-            timezone=zone,
-            **trigger_args,
-        )
+                enabled = bool(settings.get("schedule_enabled", True))
+                if not enabled:
+                    continue
+
+                cron = str(settings.get("schedule_cron", "0 8 * * *"))
+                trigger_args = _parse_cron(cron)
+                timezone = str(settings.get("timezone", "Asia/Shanghai"))
+                try:
+                    zone = ZoneInfo(timezone)
+                except Exception:
+                    zone = ZoneInfo("UTC")
+
+                self.scheduler.add_job(
+                    func=lambda username=username: asyncio.create_task(self._run_scheduled_for_user(username)),
+                    trigger="cron",
+                    id=f"daily-podcast-job:{username}",
+                    replace_existing=True,
+                    timezone=zone,
+                    **trigger_args,
+                )

@@ -2,7 +2,7 @@
 
 一个可直接部署的 AI 播客自动化系统：
 
-- 从多来源采集 AI 信息（RSS / arXiv / NewsAPI / RSSHub）
+- 从多来源采集 AI 信息（RSS / arXiv / NewsAPI）
 - 自动筛选、总结、生成播客脚本
 - 默认使用 `edge-tts` 合成音频（可切换 `custom_api`）
 - 通过 Telegram 推送文本材料与音频
@@ -12,10 +12,10 @@
 
 ## 功能概览
 
-### 1) 全局设置
+### 1) 个人设置（用户隔离）
 
-- 语言（下拉选择：主流语言）
-- 时区
+- 每个用户独立保存：语言、时区、Cron、提示词、LLM/TTS/Telegram 参数
+- 新注册用户默认使用系统占位默认值（如 OpenAI 默认占位），不会继承 admin 的私有配置
 - 定时任务开关（启用/停用）
 - Cron 定时表达式
 - 自然语言转 Cron（如“每天早上8点”一键转换）
@@ -43,7 +43,6 @@
 - 默认来源为空（不自动导入）
 - 支持直接添加 RSS URL
 - 支持批量导入 RSS 配置（JSON，可让 AI 生成后粘贴导入）
-- 支持 RSSHub 路由转换为 RSS
 - 支持来源级关键词与条目上限
 - 单来源测试 / 修改 / 启停 / 删除
 
@@ -61,6 +60,15 @@
 - 管理员支持用户列表、用户禁用/启用、删除用户、重置密码
 - 管理员可审核待注册用户（通过 / 拒绝）
 
+### 7) 多用户隔离说明
+
+- 每个用户仅能看到并管理自己的来源（`sources`）
+- 每个用户仅能查看和删除自己的播客历史（`episodes`）
+- 每个用户首次进入时读取系统默认占位配置，不会自动读取其他用户（含 admin）已填写的 API Key/模型参数
+- 每个用户独立生成聚合 RSS：`/rss/aggregated.xml`（服务端按当前登录用户映射）
+- 调度器按用户单独创建任务，互不影响
+- 管理员删除用户时，会同步清理该用户的来源、历史、用户设置与文件
+
 ---
 
 ## 技术栈
@@ -68,7 +76,7 @@
 - 后端：FastAPI + SQLAlchemy + APScheduler
 - 前端：原生 HTML/CSS/JS
 - 数据库：SQLite（`data/podcast.db`）
-- RSS 聚合：RSSHub（Docker 内置）
+- RSS 聚合：内置来源归一化与聚合器
 - TTS：`edge-tts`（默认）/ `custom_api`
 - 部署：Docker Compose
 
@@ -83,7 +91,6 @@ docker compose up -d --build
 访问：
 
 - 主应用：`http://localhost:26552`
-- RSSHub：`http://localhost:26553`
 
 默认账号：
 
@@ -98,7 +105,7 @@ docker compose up -d --build
 2. 在“全局设置”里设置 `language / timezone / schedule_cron`
 3. 需要自动运行时，确认“定时任务开关=启用”
 4. 可先用自然语言转换 Cron，再点击“测试 Cron”确认
-5. 在“来源管理”添加 RSS 或 RSSHub 路由
+5. 在“来源管理”添加 RSS URL
 6. 点击“执行”触发一次，检查生成结果
 7. 在“播客历史”查看音频与材料
 
@@ -129,7 +136,6 @@ docker compose up -d --build
 - `GET /api/sources`
 - `POST /api/sources`
 - `POST /api/sources/rss`
-- `POST /api/sources/rsshub`
 - `POST /api/sources/import-rss`
 - `POST /api/sources/{id}/test`
 - `PUT /api/sources/{id}`

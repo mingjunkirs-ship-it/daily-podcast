@@ -59,14 +59,15 @@ def _write_source_feed(source_id: int, xml: str) -> Path:
     return path
 
 
-def _write_aggregate_feed(items: list[NormalizedItem]) -> Path:
+def _write_aggregate_feed(items: list[NormalizedItem], owner_username: str) -> Path:
     xml = build_rss_xml(
         feed_title="AI Podcast Aggregated Feed",
         feed_link="https://localhost/internal/aggregate",
         feed_description="Aggregated normalized feed across all enabled sources.",
         items=items,
     )
-    path = FEEDS_DIR / "aggregated.xml"
+    safe_owner = str(owner_username or "admin").strip() or "admin"
+    path = FEEDS_DIR / f"aggregated-{safe_owner}.xml"
     path.write_text(xml, encoding="utf-8")
     return path
 
@@ -170,8 +171,8 @@ class PipelineRunner:
             return text
         return exc.__class__.__name__
 
-    def _create_episode(self, db: Session, trigger: str) -> Episode:
-        episode = Episode(status="pending", trigger_type=trigger, overview="任务排队中")
+    def _create_episode(self, db: Session, trigger: str, owner_username: str) -> Episode:
+        episode = Episode(owner_username=owner_username, status="pending", trigger_type=trigger, overview="任务排队中")
         db.add(episode)
         db.commit()
         db.refresh(episode)
@@ -211,9 +212,9 @@ class PipelineRunner:
                 db.commit()
                 raise
 
-    async def queue_once(self, trigger: str = "manual") -> int:
+    async def queue_once(self, trigger: str = "manual", owner_username: str = "admin") -> int:
         with self.session_factory() as db:
-            episode = self._create_episode(db, trigger)
+            episode = self._create_episode(db, trigger, owner_username)
             episode_id = episode.id
         asyncio.create_task(self._run_existing_episode_task(episode_id))
         return episode_id
@@ -224,10 +225,14 @@ class PipelineRunner:
         except Exception:
             return
 
-    async def rebuild_source_feeds(self) -> dict:
+    async def rebuild_source_feeds(self, owner_username: str = "admin") -> dict:
         with self.session_factory() as db:
-            settings = get_settings(db)
-            sources = db.scalars(select(Source).where(Source.enabled.is_(True)).order_by(Source.id)).all()
+            settings = get_settings(db, username=owner_username)
+            sources = db.scalars(
+                select(Source)
+                .where(Source.owner_username == owner_username, Source.enabled.is_(True))
+                .order_by(Source.id)
+            ).all()
             written = 0
             for source in sources:
                 try:
@@ -241,9 +246,9 @@ class PipelineRunner:
             db.commit()
         return {"sources": written}
 
-    async def run_once(self, trigger: str = "manual") -> dict:
+    async def run_once(self, trigger: str = "manual", owner_username: str = "admin") -> dict:
         with self.session_factory() as db:
-            episode = self._create_episode(db, trigger)
+            episode = self._create_episode(db, trigger, owner_username)
             try:
                 result = await self._execute_episode(db, episode)
                 return result
@@ -267,13 +272,18 @@ class PipelineRunner:
     async def _execute_episode(self, db: Session, episode: Episode) -> dict:
         self._set_progress(db, episode, stage="init", percent=3, message="初始化任务参数")
 
-        settings = get_settings(db)
+        owner_username = str(episode.owner_username or "admin").strip() or "admin"
+        settings = get_settings(db, username=owner_username)
         language = str(settings.get("language", "zh-CN"))
         podcast_name = str(settings.get("podcast_name", "AI Daily Podcast"))
         host_style = str(settings.get("podcast_host_style", "专业、简洁、信息密度高"))
         max_total_items = int(settings.get("max_total_items", 40))
 
-        sources = db.scalars(select(Source).where(Source.enabled.is_(True)).order_by(Source.id)).all()
+        sources = db.scalars(
+            select(Source)
+            .where(Source.owner_username == owner_username, Source.enabled.is_(True))
+            .order_by(Source.id)
+        ).all()
         if not sources:
             raise RuntimeError("没有启用的 Source，请先在管理台配置")
 
@@ -380,7 +390,7 @@ class PipelineRunner:
                 f"抓取成功但关键词过滤后为 0 条。当前关键词：{topic_keywords or '（空）'}，建议放宽后重试"
             )
 
-        _write_aggregate_feed(all_items)
+        _write_aggregate_feed(all_items, owner_username)
 
         async def _summary_progress(index: int, total: int, item: Any) -> None:
             self._set_progress(
